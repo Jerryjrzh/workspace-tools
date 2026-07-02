@@ -1,0 +1,42 @@
+{
+  "abyss_v2": {
+    "name": "深渊筑底V2",
+    "version": "2.0",
+    "enabled": true,
+    "risk_level": "medium",
+    "config": {
+      "long_term_days": 400,
+      "min_drop_percent": 0.4,
+      "price_low_percentile": 0.35,
+      "volume_ma_period": 20,
+      "signal_strength_threshold": 70
+    },
+    "tags": [
+      "value",
+      "reversal"
+    ],
+    "suitable_market": [
+      "main_board"
+    ]
+  },
+  "ma13_short": {
+    "name": "MA13短线策略",
+    "version": "2.0",
+    "enabled": true,
+    "risk_level": "high",
+    "config": {
+      "ma_period": 13,
+      "signal_window": 5,
+      "min_volume_ratio": 1.5,
+      "trend_filter_ma": 60
+    },
+    "tags": [
+      "momentum",
+      "short-term"
+    ],
+    "suitable_market": [
+      "main_board",
+      "chi-next"
+    ]
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "name": "lmstudio-workspace-tools",
+  "version": "1.0.0",
+  "description": "LM Studio workspace awareness + local system commands MCP server",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0"
+  }
+}

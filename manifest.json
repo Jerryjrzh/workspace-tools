@@ -1,0 +1,6 @@
+{
+  "type": "plugin",
+  "runner": "mcpBridge",
+  "owner": "mcp",
+  "name": "workspace-tools"
+}

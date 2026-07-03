@@ -16,7 +16,8 @@ class WorkspaceManager {
       fs.mkdirSync(dir, { recursive: true });
     }
     if (!fs.existsSync(STATE_DB)) {
-      fs.writeFileSync(STATE_DB, JSON.stringify({ sessions: {}, globalLast: null }), 'utf8');
+      // Removed globalLast initialization - no longer needed
+      fs.writeFileSync(STATE_DB, JSON.stringify({ sessions: {} }), 'utf8');
     }
   }
 
@@ -33,8 +34,8 @@ class WorkspaceManager {
       workspace: resolvedPath,
       updatedAt: new Date().toISOString()
     };
-    state.globalLast = resolvedPath;
-
+    // Removed globalLast assignment - no longer tracking global fallback
+    
     fs.writeFileSync(STATE_DB, JSON.stringify(state, null, 2), 'utf8');
     return resolvedPath;
   }
@@ -47,12 +48,14 @@ class WorkspaceManager {
     if (convId && state.sessions[convId]) {
       return state.sessions[convId].workspace;
     }
-    // Fallback to global last active path
-    return state.globalLast || process.cwd();
+    // Removed fallback to global last active path - now requires explicit session context
+    // Return undefined or throw error to force explicit workspace setting
+    return undefined; 
   }
 
   // Legacy compatibility - get workspace without session context
   getWorkspace() {
+    // Now requires explicit session context, returns undefined if none
     return this.getWorkspaceForSession(null);
   }
 

@@ -1,14 +1,30 @@
-// src/tools/index.js
 // Consolidated tool exports from all tool modules
 
-import { workspaceTools } from './workspace.js';
-import { fileTools } from './file.js';
-import { gitTools } from './git.js';
-import { shellTools } from './shell.js';
-import { handleWorkspaceTools } from './workspace.js';
-import { handleFileTools } from './file.js';
-import { handleGitTools } from './git.js';
-import { handleShellTools } from './shell.js';
+const { workspaceTools } = require('./workspace.js');
+const { fileTools } = require('./file.js');
+const { gitTools } = require('./git.js');
+const { shellTools } = require('./shell.js');
+const { taskTools } = require('./task.js');
+const { contextTools } = require('./context.js');
+const { contextLoadTools } = require('./context_load.js');
+const { embeddingTools } = require('./embedding.js');
+const { reviewTools } = require('./review.js');
+const { tmuxTools } = require('./tmux.js');
+const { sessionTools } = require('./session.js');
+const { envTools } = require('./env.js');
+
+const { handleWorkspaceTools } = require('./workspace.js');
+const { handleFileTools } = require('./file.js');
+const { handleGitTools } = require('./git.js');
+const { handleShellTools } = require('./shell.js');
+const { handleTaskTools } = require('./task.js');
+const { handleContextTools } = require('./context.js');
+const { handleContextLoadTools } = require('./context_load.js');
+const { handleEmbeddingTools } = require('./embedding.js');
+const { handleReviewTools } = require('./review.js');
+const { handleTmuxTools } = require('./tmux.js');
+const { handleSessionTools } = require('./session.js');
+const { handleEnvTools } = require('./env.js');
 
 /**
  * Route tool calls to appropriate handlers based on tool name
@@ -39,7 +55,42 @@ export const toolHandlers = {
   process_start: handleShellTools,
   process_output: handleShellTools,
   process_kill: handleShellTools,
-  process_list_bg: handleShellTools
+  process_list_bg: handleShellTools,
+  
+  // Task tools
+  task_checkpoint: handleTaskTools,
+  task_resume: handleTaskTools,
+  task_list: handleTaskTools,
+  
+  // Context tools
+  context_anchor: handleContextTools,
+  
+  // Context load tools
+  context_load: handleContextLoadTools,
+  context_summary: handleContextLoadTools,
+  
+  // Embedding tools
+  lm_embed: handleEmbeddingTools,
+  semantic_search: handleEmbeddingTools,
+  embed_files: handleEmbeddingTools,
+  
+  // Review tools
+  lm_review: handleReviewTools,
+  
+  // TMUX tools
+  tmux_run: handleTmuxTools,
+  tmux_send: handleTmuxTools,
+  tmux_capture: handleTmuxTools,
+  tmux_list: handleTmuxTools,
+  tmux_new_session: handleTmuxTools,
+  tmux_kill: handleTmuxTools,
+  
+  // Session tools
+  ssh_session: handleSessionTools,
+  serial_session: handleSessionTools,
+  
+  // Env tools
+  env_check: handleEnvTools
 };
 
 /**
@@ -49,5 +100,13 @@ export const ALL_TOOLS = [
   ...workspaceTools,
   ...fileTools,
   ...gitTools,
-  ...shellTools
+  ...shellTools,
+  ...taskTools,
+  ...contextTools,
+  ...contextLoadTools,
+  ...embeddingTools,
+  ...reviewTools,
+  ...tmuxTools,
+  ...sessionTools,
+  ...envTools
 ];

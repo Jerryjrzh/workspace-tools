@@ -234,10 +234,66 @@ function generateDiff(filePath, newContent, startLine, endLine) {
   return { changed: changes.length > 0, changes };
 }
 
+// Enhanced syntax checking with actual language parsers
+const { execSync } = require('child_process');
+
 async function checkSyntax(language, content) {
-  // Placeholder for syntax checking
-  // In a real implementation, this would use a parser
-  return { valid: true, language };
+  try {
+    switch (language) {
+      case 'javascript':
+      case 'typescript': {
+        // Use node --check for JS/TS files
+        const tempFile = `/tmp/check_${Date.now()}.js`;
+        fs.writeFileSync(tempFile, content);
+        execSync(`node --check ${tempFile}`, { stdio: ['pipe', 'pipe', 'pipe'] });
+        fs.unlinkSync(tempFile);
+        return { valid: true, language, engine: 'node --check' };
+      }
+      
+      case 'python': {
+        // Use python -m py_compile for Python files
+        const tempFile = `/tmp/check_${Date.now()}.py`;
+        fs.writeFileSync(tempFile, content);
+        execSync(`python -m py_compile ${tempFile}`, { stdio: ['pipe', 'pipe', 'pipe'] });
+        fs.unlinkSync(tempFile);
+        return { valid: true, language, engine: 'python -m py_compile' };
+      }
+      
+      case 'go': {
+        // Use go vet for Go files
+        const tempDir = `/tmp/check_${Date.now()}`;
+        fs.mkdirSync(tempDir);
+        fs.writeFileSync(`${tempDir}/main.go`, content);
+        execSync(`cd ${tempDir} && go vet .`, { stdio: ['pipe', 'pipe', 'pipe'] });
+        fs.rmSync(tempDir, { recursive: true });
+        return { valid: true, language, engine: 'go vet' };
+      }
+      
+      case 'rust': {
+        // Use cargo check for Rust files
+        const tempDir = `/tmp/check_${Date.now()}`;
+        fs.mkdirSync(tempDir);
+        fs.writeFileSync(`${tempDir}/Cargo.toml`, `[package]\nname = "check"\nversion = "0.1.0"\n`);
+        fs.writeFileSync(`${tempDir}/src/main.rs`, content);
+        execSync(`cd ${tempDir} && cargo check --quiet`, { stdio: ['pipe', 'pipe', 'pipe'] });
+        fs.rmSync(tempDir, { recursive: true });
+        return { valid: true, language, engine: 'cargo check' };
+      }
+      
+      default:
+        // Fallback for unsupported languages
+        return { valid: true, language, engine: 'none', warning: `No syntax checker configured for ${language}` };
+    }
+  } catch (error) {
+    // Syntax error detected
+    const errorMessage = error.stderr?.toString() || error.message;
+    return { 
+      valid: false, 
+      language, 
+      error: errorMessage,
+      engine: 'node --check' 
+    };
+  }
 }
 
 function checkRemovedContent(originalLines, newLines) {
@@ -246,6 +302,42 @@ function checkRemovedContent(originalLines, newLines) {
     return { removed, warning: `删除了 ${removed} 行内容` };
   }
   return { removed: 0, warning: null };
+}
+
+// File version tracking for conflict detection
+const fileVersions = new Map();
+
+function getFileVersion(filePath) {
+  const absPath = path.resolve(process.cwd(), filePath);
+  if (fileVersions.has(absPath)) {
+    return fileVersions.get(absPath);
+  }
+  
+  // Calculate hash of current file content
+  try {
+    const content = fs.readFileSync(absPath, 'utf8');
+    const crypto = require('crypto');
+    const hash = crypto.createHash('md5').update(content).digest('hex');
+    fileVersions.set(absPath, { hash, timestamp: Date.now() });
+    return fileVersions.get(absPath);
+  } catch (e) {
+    return null;
+  }
+}
+
+function updateFileVersion(filePath) {
+  const absPath = path.resolve(process.cwd(), filePath);
+  try {
+    const content = fs.readFileSync(absPath, 'utf8');
+    const crypto = require('crypto');
+    const hash = crypto.createHash('md5').update(content).digest('hex');
+    fileVersions.set(absPath, { hash, timestamp: Date.now() });
+  } catch (e) {}
+}
+
+function clearFileVersion(filePath) {
+  const absPath = path.resolve(process.cwd(), filePath);
+  fileVersions.delete(absPath);
 }
 
 export async function handleFileTools(name, args, convId) {
@@ -515,7 +607,7 @@ export async function handleFileTools(name, args, convId) {
           }
           
           // Extract range content
-          const rangeContent = lines.slice(startLine - 1, endLine).join('\n');
+          const rangeContent = lines.slice(startLine - 1, endLine).join('\\n');
           
           // Create buffer and store in pool
           const bufferId = `edit_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
@@ -524,7 +616,8 @@ export async function handleFileTools(name, args, convId) {
             content: rangeContent,
             startLine,
             endLine,
-            originalLines: lines.length
+            originalLines: lines.length,
+            createdAt: Date.now()
           });
           
           return {
@@ -548,10 +641,6 @@ export async function handleFileTools(name, args, convId) {
           
           // Apply line replacements
           for (const replacement of args.replacements || []) {
-            const lineIndex = Math.max(replacement.line, 1) - 1;
-            if (lineIndex >= lines.length) continue;
-            
-            if (replacement.new_content !== undefined) {
               lines[lineIndex] = replacement.new_content;
             }
           }
@@ -561,6 +650,8 @@ export async function handleFileTools(name, args, convId) {
             const instructions = args.instruction.split(';');
             for (const inst of instructions) {
               const trimmed = inst.trim();
+              
+              // replace X with Y pattern
               if (trimmed.startsWith('replace ')) {
                 const parts = trimmed.substring(8).split(' with ');
                 if (parts.length === 2) {
@@ -568,6 +659,42 @@ export async function handleFileTools(name, args, convId) {
                   const newText = parts[1].trim();
                   buffer.content = buffer.content.replace(oldText, newText);
                 }
+              }
+              
+              // delete line N pattern
+              else if (trimmed.startsWith('delete line ')) {
+                const lineNum = parseInt(trimmed.substring(12).trim());
+                if (!isNaN(lineNum)) {
+                  const lines = buffer.content.split('\\n');
+                  const idx = Math.max(lineNum - 1, 0);
+                  if (idx < lines.length) {
+                    lines.splice(idx, 1);
+                    buffer.content = lines.join('\\n');
+                  }
+                }
+              }
+              
+              // insert line N with X pattern
+              else if (trimmed.startsWith('insert line ')) {
+                const match = trimmed.match(/insert line (\\d+) with (.+)/);
+                if (match) {
+                  const lineNum = parseInt(match[1]);
+                  const content = match[2];
+                  const lines = buffer.content.split('\\n');
+                  const idx = Math.max(lineNum - 1, 0);
+                  lines.splice(idx, 0, content);
+                  buffer.content = lines.join('\\n');
+                }
+              }
+              
+              // append X pattern
+              else if (trimmed.startsWith('append ')) {
+                buffer.content += '\\n' + trimmed.substring(7).trim();
+              }
+              
+              // prepend X pattern
+              else if (trimmed.startsWith('prepend ')) {
+                buffer.content = trimmed.substring(8).trim() + '\\n' + buffer.content;
               }
             }
           }
@@ -632,10 +759,29 @@ export async function handleFileTools(name, args, convId) {
             ...currentLines.slice(buffer.endLine)
           ];
           
+          // Handle dry_run mode (don't write to disk)
+          if (args.dry_run) {
+            const diff = generateDiff(filePath, newLines.join('\n'), buffer.startLine, buffer.endLine);
+            return {
+              path: filePath,
+              dryRun: true,
+              changes: diff.changes.length,
+              diff: diff.changes.slice(0, 10), // Limit to first 10 changes
+              message: `📊 Dry run complete. ${diff.changes.length} changes detected.`,
+              warnings: [
+                ...checks.brackets.valid ? [] : [`⚠️ 括号不匹配: ${checks.brackets.error}`],
+                ...checks.indentation.valid ? [] : checks.indentation.errors.slice(0, 5).map(e => `⚠️ 缩进问题: ${e}`)
+              ]
+            };
+          }
+          
           // Backup before commit (new strategy: only backup at commit time)
           const backupPath = backupFileBeforePatch(filePath);
           
           fs.writeFileSync(filePath, newLines.join('\n'), 'utf8');
+          
+          // Update file version tracking for conflict detection
+          updateFileVersion(filePath);
           
           // Clear buffer
           bufferPool.delete(bufferId);
@@ -645,7 +791,6 @@ export async function handleFileTools(name, args, convId) {
             backupPath,
             message: `✅ 编辑已提交！备份路径: ${backupPath || '无'}`
           };
-        }
         
         case "edit_cancel": {
           const bufferId = args.buffer_id;
@@ -668,3 +813,26 @@ export async function handleFileTools(name, args, convId) {
 
 // Auto-cleanup old backups on module load (optional - can be called manually)
 cleanupOldBackups(10);
+// Buffer lifecycle management
+const BUFFER_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+function cleanupExpiredBuffers() {
+  const now = Date.now();
+  let cleaned = 0;
+  
+  for (const [bufferId, buffer] of bufferPool.entries()) {
+    if (now - buffer.createdAt > BUFFER_TTL_MS) {
+      console.log(`🧹 Auto-cleanup expired buffer: ${bufferId}`);
+      bufferPool.delete(bufferId);
+      cleaned++;
+    }
+  }
+  
+  return cleaned;
+}
+
+// Run cleanup periodically
+setInterval(cleanupExpiredBuffers, 60 * 60 * 1000); // Every hour
+
+// Export for testing
+module.exports = { cleanupExpiredBuffers };

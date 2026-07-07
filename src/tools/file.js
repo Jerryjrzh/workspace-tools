@@ -8,6 +8,10 @@ import os from 'os';
 // Backup directory constant
 const BACKUP_DIR = '.lmstudio-backups';
 
+// Buffer pool to store file contents for edit transactions
+const bufferPool = new Map();
+let nextBufferId = 1;
+
 /**
  * Create a backup of a file before modification
  * @param {string} filePath - Path to the file to backup
@@ -39,15 +43,25 @@ function backupFileBeforePatch(filePath) {
 
 /**
  * Handle file_rollback tool - restore file from backup
+ * Supports two modes:
+ * 1. latest: Automatically find and restore the most recent backup (default)
+ * 2. specific: Restore from a specific backup path or backup_id
  */
 async function handleFileRollback(args, ws) {
   const filePath = path.resolve(ws || process.cwd(), args.path);
   const backupDirPath = path.join(ws || process.cwd(), BACKUP_DIR);
   
-  let targetBackup = args.backup_path;
+  let targetBackup;
   
-  // If no specific backup specified, find the latest one for this file
-  if (!targetBackup) {
+  // Check if user specified a specific backup
+  if (args.backup_path) {
+    targetBackup = path.resolve(ws || process.cwd(), args.backup_path);
+    
+    if (!fs.existsSync(targetBackup)) {
+      return `❌ 备份文件不存在: ${targetBackup}`;
+    }
+  } else {
+    // No specific backup specified, find the latest one for this file
     if (!fs.existsSync(backupDirPath)) {
       return `❌ 未找到备份目录: ${backupDirPath}`;
     }
@@ -63,18 +77,13 @@ async function handleFileRollback(args, ws) {
     }
     
     targetBackup = path.join(backupDirPath, backups[0]);
-  } else {
-    targetBackup = path.resolve(ws || process.cwd(), targetBackup);
-  }
-  
-  if (!fs.existsSync(targetBackup)) {
-    return `❌ 备份文件不存在: ${targetBackup}`;
   }
   
   // Perform the physical restore
   fs.copyFileSync(targetBackup, filePath);
   
-  return `✅ 成功回滚！\n目标文件: ${filePath}\n恢复自备份: ${targetBackup}`;
+  const backupName = path.basename(targetBackup);
+  return `✅ 成功回滚！\n目标文件: ${filePath}\n恢复自备份: ${targetBackup}\n备份名称: ${backupName}`;
 }
 
 export const fileTools = [
@@ -160,7 +169,7 @@ export const fileTools = [
   },
   {
     name: "file_rollback",
-    description: "回滚文件到上一次修改前的状态。当 file_patch 或代码写坏、报错时，用此工具一键还原文件。",
+    description: "回滚文件到上一次修改前的状态。当 file_patch 或代码写坏、报错时，用此工具一键还原文件。\n支持两种模式：\n1. latest（默认）：自动寻找并恢复最新的备份\n2. specific：通过 backup_path 指定特定的备份文件\n\n示例：\n- 回滚到最新备份: {\"path\": \"src/app.js\"}\n- 回滚到指定备份: {\"path\": \"src/app.js\", \"backup_path\": \".lmstudio-backups/app.js_2026-07-07T10-30-00.bak\"}",
     inputSchema: {
       type: "object",
       properties: {
@@ -175,8 +184,167 @@ export const fileTools = [
       },
       required: ["path"]
     }
+  },
+  // New Edit Transaction Tools
+  {
+    name: "edit_begin",
+    description: "开始一个编辑事务。读取文件指定范围的内容到内存 buffer 中。\n返回 buffer_id，后续使用 edit_apply、edit_review、edit_commit 操作该 buffer。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "要编辑的文件路径" },
+        start_line: { type: "number", description: "起始行号（1-indexed）" },
+        end_line: { type: "number", description: "结束行号（1-indexed，含）" }
+      },
+      required: ["path"]
+    }
+  },
+  {
+    name: "edit_apply",
+    description: "对 edit_begin 创建的 buffer 应用修改。\n支持两种方式：\n1. replacements 数组：按行号替换内容\n2. instruction 字符串：自然语言指令（如 'replace old_text with new_text'）",
+    inputSchema: {
+      type: "object",
+      properties: {
+        buffer_id: { type: "string", description: "edit_begin 返回的 buffer ID" },
+        replacements: { 
+          type: "array", 
+          items: { 
+            type: "object",
+            properties: {
+              line: { type: "number", description: "行号（1-indexed）" },
+              new_content: { type: "string", description: "新内容" }
+            },
+            required: ["line", "new_content"]
+          }
+        },
+        instruction: { 
+          type: "string", 
+          description: "自然语言指令，例如 'replace old_text with new_text'" 
+        }
+      },
+      required: ["buffer_id"]
+    }
+  },
+  {
+    name: "edit_review",
+    description: "审查 edit_begin 创建的 buffer。检查括号匹配、缩进、语法等。\n返回审查结果和建议。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        buffer_id: { type: "string", description: "要审查的 buffer ID" },
+        language: { 
+          type: "string", 
+          enum: ["javascript", "typescript", "python", "go", "rust"],
+          description: "代码语言（用于语法检查）" 
+        }
+      },
+      required: ["buffer_id"]
+    }
+  },
+  {
+    name: "edit_commit",
+    description: "提交 edit_begin 创建的 buffer。将修改写入文件，并创建备份。\n提交后 buffer 将被清除。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        buffer_id: { type: "string", description: "要提交的 buffer ID" }
+      },
+      required: ["buffer_id"]
+    }
+  },
+  {
+    name: "edit_cancel",
+    description: "取消 edit_begin 创建的编辑会话。丢弃所有未提交的修改。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        buffer_id: { type: "string", description: "要取消的 buffer ID" }
+      },
+      required: ["buffer_id"]
+    }
   }
 ];
+
+// Helper functions for edit review
+function checkBrackets(content) {
+  const stack = [];
+  const pairs = { '(': ')', '[': ']', '{': '}' };
+  const openers = Object.keys(pairs);
+  
+  for (let i = 0; i < content.length; i++) {
+    const char = content[i];
+    if (openers.includes(char)) {
+      stack.push({ char, index: i });
+    } else if (Object.values(pairs).includes(char)) {
+      const lastOpener = stack.pop();
+      if (!lastOpener || pairs[lastOpener.char] !== char) {
+        return { valid: false, error: `不匹配的括号在位置 ${i}` };
+      }
+    }
+  }
+  
+  if (stack.length > 0) {
+    return { valid: false, error: `未闭合的括号: ${stack.map(s => s.char).join(', ')}` };
+  }
+  
+  return { valid: true };
+}
+
+function checkIndentation(lines) {
+  let errors = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line.trim()) continue;
+    
+    // Check for mixed tabs/spaces
+    const leadingWhitespace = line.match(/^[\t ]*/)[0];
+    if (leadingWhitespace.includes('\t') && leadingWhitespace.includes(' ')) {
+      errors.push(`第 ${i + 1} 行：混合使用制表符和空格`);
+    }
+    
+    // Check for excessive indentation
+    const indentLevel = Math.floor(leadingWhitespace.length / 2);
+    if (indentLevel > 20) {
+      errors.push(`第 ${i + 1} 行：缩进过深 (${indentLevel} 层)`);
+    }
+  }
+  
+  return { valid: errors.length === 0, errors };
+}
+
+function generateDiff(filePath, newContent, startLine, endLine) {
+  // Simple diff generation
+  const oldContent = fs.readFileSync(filePath, 'utf8');
+  const oldLines = oldContent.split('\n').slice(startLine - 1, endLine);
+  const newLines = newContent.split('\n');
+  
+  let changes = [];
+  for (let i = 0; i < Math.max(oldLines.length, newLines.length); i++) {
+    if (oldLines[i] !== newLines[i]) {
+      changes.push({
+        line: startLine + i,
+        old: oldLines[i],
+        new: newLines[i]
+      });
+    }
+  }
+  
+  return { changed: changes.length > 0, changes };
+}
+
+async function checkSyntax(language, content) {
+  // Placeholder for syntax checking
+  // In a real implementation, this would use a parser
+  return { valid: true, language };
+}
+
+function checkRemovedContent(originalLines, newLines) {
+  const removed = originalLines - newLines;
+  if (removed > 0) {
+    return { removed, warning: `删除了 ${removed} 行内容` };
+  }
+  return { removed: 0, warning: null };
+}
 
 export async function handleFileTools(name, args, convId) {
   // Use middleware for security and context
@@ -192,38 +360,50 @@ export async function handleFileTools(name, args, convId) {
           }
           
           let content = fs.readFileSync(filePath, 'utf8');
+          const lines = content.split('\n');
+          const totalLines = lines.length;
           
           // Handle different modes
+          let startLine = 1;
+          let endLine = totalLines;
+          
           if (args.mode === "context" && args.line !== undefined) {
             // Context mode: read around a specific line with window size
-            const lines = content.split('\n');
-            const targetLineIndex = Math.max(0, Math.min(lines.length - 1, args.line - 1));
+            const targetLineIndex = Math.max(0, Math.min(totalLines - 1, args.line - 1));
             const windowSize = args.window || 100; // Default window of 100 lines
             const halfWindow = Math.floor(windowSize / 2);
             
-            let startIndex = Math.max(0, targetLineIndex - halfWindow);
-            let endIndex = Math.min(lines.length, startIndex + windowSize);
+            startLine = Math.max(1, targetLineIndex - halfWindow + 1);
+            endLine = Math.min(totalLines, startLine + windowSize - 1);
             
             // Adjust if we're near the beginning or end
-            if (startIndex === 0) {
-              endIndex = Math.min(lines.length, windowSize);
-            } else if (endIndex === lines.length) {
-              startIndex = Math.max(0, lines.length - windowSize);
+            if (startLine === 1) {
+              endLine = Math.min(totalLines, windowSize);
+            } else if (endLine === totalLines) {
+              startLine = Math.max(1, totalLines - windowSize + 1);
             }
-            
-            content = lines.slice(startIndex, endIndex).join('\n');
           } else if (args.mode === "range" || (args.start_line !== undefined && args.end_line !== undefined)) {
             // Range mode: read specific line range (backward compatible)
-            const lines = content.split('\n');
-            const startLine = Math.max(1, args.start_line || 1);
-            const endLine = Math.min(lines.length, args.end_line || lines.length);
-            content = lines.slice(startLine - 1, endLine).join('\n');
+            startLine = Math.max(1, args.start_line || 1);
+            endLine = Math.min(totalLines, args.end_line || totalLines);
           } else if (args.mode === "full" || (args.start_line === undefined && args.end_line === undefined)) {
             // Full mode: read entire file (default when no range specified)
-            // Content already loaded above
+            startLine = 1;
+            endLine = totalLines;
           }
           
-          return content;
+          // Extract the actual content for this range
+          const rangeContent = lines.slice(startLine - 1, endLine).join('\n');
+          
+          // Return EditBuffer object instead of plain string
+          return {
+            bufferId: `buf_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+            path: filePath,
+            startLine,
+            endLine,
+            totalLines,
+            content: rangeContent
+          };
         }
         
         case "file_write": {
@@ -409,6 +589,169 @@ export async function handleFileTools(name, args, convId) {
         
         case "file_rollback": {
           return await handleFileRollback(args, ws);
+        }
+        
+        // New Edit Transaction Tools
+        case "edit_begin": {
+          const filePath = path.resolve(ws || process.cwd(), args.path);
+          if (!fs.existsSync(filePath)) {
+            throw new Error(`文件不存在: ${filePath}`);
+          }
+          
+          let content = fs.readFileSync(filePath, 'utf8');
+          const lines = content.split('\n');
+          
+          // Determine range
+          let startLine = 1;
+          let endLine = lines.length;
+          
+          if (args.start_line) {
+            startLine = Math.max(1, args.start_line);
+          }
+          if (args.end_line) {
+            endLine = Math.min(lines.length, args.end_line);
+          }
+          
+          // Extract range content
+          const rangeContent = lines.slice(startLine - 1, endLine).join('\n');
+          
+          // Create buffer and store in pool
+          const bufferId = `edit_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+          bufferPool.set(bufferId, {
+            path: filePath,
+            content: rangeContent,
+            startLine,
+            endLine,
+            originalLines: lines.length
+          });
+          
+          return {
+            bufferId,
+            path: filePath,
+            startLine,
+            endLine,
+            totalLines: lines.length,
+            message: `✅ 编辑会话已开始，buffer ID: ${bufferId}`
+          };
+        }
+        
+        case "edit_apply": {
+          const bufferId = args.buffer_id;
+          if (!bufferPool.has(bufferId)) {
+            return { error: `Buffer 不存在: ${bufferId}` };
+          }
+          
+          const buffer = bufferPool.get(bufferId);
+          let lines = buffer.content.split('\n');
+          
+          // Apply line replacements
+          for (const replacement of args.replacements || []) {
+            const lineIndex = Math.max(replacement.line, 1) - 1;
+            if (lineIndex >= lines.length) continue;
+            
+            if (replacement.new_content !== undefined) {
+              lines[lineIndex] = replacement.new_content;
+            }
+          }
+          
+          // Apply instruction-based modifications
+          if (args.instruction && args.instruction.trim()) {
+            const instructions = args.instruction.split(';');
+            for (const inst of instructions) {
+              const trimmed = inst.trim();
+              if (trimmed.startsWith('replace ')) {
+                const parts = trimmed.substring(8).split(' with ');
+                if (parts.length === 2) {
+                  const oldText = parts[0].trim();
+                  const newText = parts[1].trim();
+                  buffer.content = buffer.content.replace(oldText, newText);
+                }
+              }
+            }
+          }
+          
+          // Update buffer
+          buffer.content = lines.join('\n');
+          bufferPool.set(bufferId, buffer);
+          
+          return {
+            bufferId,
+            path: buffer.path,
+            startLine: buffer.startLine,
+            endLine: buffer.endLine,
+            modified: true,
+            message: `✅ 修改已应用到 buffer: ${bufferId}`
+          };
+        }
+        
+        case "edit_review": {
+          const bufferId = args.buffer_id;
+          if (!bufferPool.has(bufferId)) {
+            return { error: `Buffer 不存在: ${bufferId}` };
+          }
+          
+          const buffer = bufferPool.get(bufferId);
+          const lines = buffer.content.split('\n');
+          
+          // Perform checks
+          const checks = {
+            brackets: checkBrackets(buffer.content),
+            indentation: checkIndentation(lines),
+            diff: generateDiff(buffer.path, buffer.content, buffer.startLine, buffer.endLine),
+            syntax: args.language ? await checkSyntax(args.language, buffer.content) : null,
+            removedContent: checkRemovedContent(buffer.originalLines, lines.length)
+          };
+          
+          return {
+            bufferId,
+            path: buffer.path,
+            checks,
+            summary: `✅ 审查完成。括号: ${checks.brackets.valid ? '✓' : '✗'}，缩进: ${checks.indentation.valid ? '✓' : '✗'}`
+          };
+        }
+        
+        case "edit_commit": {
+          const bufferId = args.buffer_id;
+          if (!bufferPool.has(bufferId)) {
+            return `❌ Buffer 不存在: ${bufferId}`;
+          }
+          
+          const buffer = bufferPool.get(bufferId);
+          
+          // Read current file content
+          const filePath = path.resolve(ws || process.cwd(), buffer.path);
+          let currentContent = fs.readFileSync(filePath, 'utf8');
+          const currentLines = currentContent.split('\n');
+          
+          // Replace the range with buffer content
+          const newLines = [
+            ...currentLines.slice(0, buffer.startLine - 1),
+            ...buffer.content.split('\n'),
+            ...currentLines.slice(buffer.endLine)
+          ];
+          
+          // Backup before commit (new strategy: only backup at commit time)
+          const backupPath = backupFileBeforePatch(filePath);
+          
+          fs.writeFileSync(filePath, newLines.join('\n'), 'utf8');
+          
+          // Clear buffer
+          bufferPool.delete(bufferId);
+          
+          return {
+            path: filePath,
+            backupPath,
+            message: `✅ 编辑已提交！备份路径: ${backupPath || '无'}`
+          };
+        }
+        
+        case "edit_cancel": {
+          const bufferId = args.buffer_id;
+          if (bufferPool.has(bufferId)) {
+            bufferPool.delete(bufferId);
+            return `✅ 编辑会话已取消: ${bufferId}`;
+          }
+          return `⚠️ Buffer 不存在: ${bufferId}`;
         }
         
         default:

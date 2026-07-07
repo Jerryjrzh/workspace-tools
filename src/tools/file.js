@@ -1,102 +1,4 @@
-// src/tools/file.js
-import { workspaceManager } from '../managers/workspace.js';
-import { ToolMiddleware } from '../utils/middleware.js';
-import fs from 'fs';
-import path from 'path';
-import os from 'os';
 
-// Backup directory constant
-const BACKUP_DIR = '.lmstudio-backups';
-
-// Buffer pool to store file contents for edit transactions
-const bufferPool = new Map();
-let nextBufferId = 1;
-
-/**
- * Create a backup of a file before modification
- * @param {string} filePath - Path to the file to backup
- * @returns {string|null} - Path to the backup file, or null if no backup needed
- */
-function backupFileBeforePatch(filePath) {
-  try {
-    if (!fs.existsSync(filePath)) return null; // No backup needed for new files
-    
-    const ws = workspaceManager.getWorkspaceForSession('default') || process.cwd();
-    const backupDirPath = path.join(ws, BACKUP_DIR);
-    
-    if (!fs.existsSync(backupDirPath)) {
-      fs.mkdirSync(backupDirPath, { recursive: true });
-    }
-    
-    // Generate timestamped backup filename
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const fileName = path.basename(filePath);
-    const backupPath = path.join(backupDirPath, `${fileName}_${timestamp}.bak`);
-    
-    fs.copyFileSync(filePath, backupPath);
-    return backupPath;
-  } catch (e) {
-    console.error(`[Backup Failed] Cannot backup file ${filePath}:`, e.message);
-    return null; // Don't fail if backup fails
-  }
-}
-
-/**
- * Handle file_rollback tool - restore file from backup
- * Supports two modes:
- * 1. latest: Automatically find and restore the most recent backup (default)
- * 2. specific: Restore from a specific backup path or backup_id
- */
-async function handleFileRollback(args, ws) {
-  const filePath = path.resolve(ws || process.cwd(), args.path);
-  const backupDirPath = path.join(ws || process.cwd(), BACKUP_DIR);
-  
-  let targetBackup;
-  
-  // Check if user specified a specific backup
-  if (args.backup_path) {
-    targetBackup = path.resolve(ws || process.cwd(), args.backup_path);
-    
-    if (!fs.existsSync(targetBackup)) {
-      return `❌ 备份文件不存在: ${targetBackup}`;
-    }
-  } else {
-    // No specific backup specified, find the latest one for this file
-    if (!fs.existsSync(backupDirPath)) {
-      return `❌ 未找到备份目录: ${backupDirPath}`;
-    }
-    
-    const fileName = path.basename(filePath);
-    // Find all backups for this file and sort by timestamp (newest first)
-    const backups = fs.readdirSync(backupDirPath)
-      .filter(f => f.startsWith(fileName + '_') && f.endsWith('.bak'))
-      .sort((a, b) => b.localeCompare(a));
-    
-    if (backups.length === 0) {
-      return `❌ 未找到文件 ${fileName} 的历史备份`;
-    }
-    
-    targetBackup = path.join(backupDirPath, backups[0]);
-  }
-  
-  // Perform the physical restore
-  fs.copyFileSync(targetBackup, filePath);
-  
-  const backupName = path.basename(targetBackup);
-  return `✅ 成功回滚！\n目标文件: ${filePath}\n恢复自备份: ${targetBackup}\n备份名称: ${backupName}`;
-}
-
-export const fileTools = [
-  {
-    name: "file_read",
-    description: "读取文件内容，支持行范围和多种读取模式(context/range/full)",
-    inputSchema: {
-      type: "object",
-      properties: {
-        path: { type: "string" },
-        start_line: { type: "number" },
-        end_line: { type: "number" },
-        mode: { 
           type: "string", 
           enum: ["context", "range", "full"], 
           description: "读取模式：context=基于行号的上下文窗口, range=指定行范围, full=完整文件内容" 
@@ -763,3 +665,6 @@ export async function handleFileTools(name, args, convId) {
     { conversation_id: convId }
   );
 }
+
+// Auto-cleanup old backups on module load (optional - can be called manually)
+cleanupOldBackups(10);

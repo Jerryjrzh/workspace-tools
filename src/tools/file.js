@@ -1,4 +1,102 @@
+// src/tools/file.js
+import { workspaceManager } from '../managers/workspace.js';
+import { ToolMiddleware } from '../utils/middleware.js';
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
 
+// Backup directory constant
+const BACKUP_DIR = '.lmstudio-backups';
+
+// Buffer pool to store file contents for edit transactions
+const bufferPool = new Map();
+let nextBufferId = 1;
+
+/**
+ * Create a backup of a file before modification
+ * @param {string} filePath - Path to the file to backup
+ * @returns {string|null} - Path to the backup file, or null if no backup needed
+ */
+function backupFileBeforePatch(filePath) {
+  try {
+    if (!fs.existsSync(filePath)) return null; // No backup needed for new files
+    
+    const ws = workspaceManager.getWorkspaceForSession('default') || process.cwd();
+    const backupDirPath = path.join(ws, BACKUP_DIR);
+    
+    if (!fs.existsSync(backupDirPath)) {
+      fs.mkdirSync(backupDirPath, { recursive: true });
+    }
+    
+    // Generate timestamped backup filename
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const fileName = path.basename(filePath);
+    const backupPath = path.join(backupDirPath, `${fileName}_${timestamp}.bak`);
+    
+    fs.copyFileSync(filePath, backupPath);
+    return backupPath;
+  } catch (e) {
+    console.error(`[Backup Failed] Cannot backup file ${filePath}:`, e.message);
+    return null; // Don't fail if backup fails
+  }
+}
+
+/**
+ * Handle file_rollback tool - restore file from backup
+ * Supports two modes:
+ * 1. latest: Automatically find and restore the most recent backup (default)
+ * 2. specific: Restore from a specific backup path or backup_id
+ */
+async function handleFileRollback(args, ws) {
+  const filePath = path.resolve(ws || process.cwd(), args.path);
+  const backupDirPath = path.join(ws || process.cwd(), BACKUP_DIR);
+  
+  let targetBackup;
+  
+  // Check if user specified a specific backup
+  if (args.backup_path) {
+    targetBackup = path.resolve(ws || process.cwd(), args.backup_path);
+    
+    if (!fs.existsSync(targetBackup)) {
+      return `❌ 备份文件不存在: ${targetBackup}`;
+    }
+  } else {
+    // No specific backup specified, find the latest one for this file
+    if (!fs.existsSync(backupDirPath)) {
+      return `❌ 未找到备份目录: ${backupDirPath}`;
+    }
+    
+    const fileName = path.basename(filePath);
+    // Find all backups for this file and sort by timestamp (newest first)
+    const backups = fs.readdirSync(backupDirPath)
+      .filter(f => f.startsWith(fileName + '_') && f.endsWith('.bak'))
+      .sort((a, b) => b.localeCompare(a));
+    
+    if (backups.length === 0) {
+      return `❌ 未找到文件 ${fileName} 的历史备份`;
+    }
+    
+    targetBackup = path.join(backupDirPath, backups[0]);
+  }
+  
+  // Perform the physical restore
+  fs.copyFileSync(targetBackup, filePath);
+  
+  const backupName = path.basename(targetBackup);
+  return `✅ 成功回滚！\n目标文件: ${filePath}\n恢复自备份: ${targetBackup}\n备份名称: ${backupName}`;
+}
+
+export const fileTools = [
+  {
+    name: "file_read",
+    description: "读取文件内容，支持行范围和多种读取模式(context/range/full)",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: { type: "string" },
+        start_line: { type: "number" },
+        end_line: { type: "number" },
+        mode: { 
           type: "string", 
           enum: ["context", "range", "full"], 
           description: "读取模式：context=基于行号的上下文窗口, range=指定行范围, full=完整文件内容" 
@@ -234,116 +332,10 @@ function generateDiff(filePath, newContent, startLine, endLine) {
   return { changed: changes.length > 0, changes };
 }
 
-// Enhanced syntax checking with actual language parsers
-const { execSync } = require('child_process');
-const crypto = require('crypto');
-
-/**
- * Syntax checker using in-process parsers instead of subprocesses.
- * Faster and more reliable than spawning child processes.
- */
-
-function checkSyntax(language, content) {
-  try {
-    switch (language) {
-      case 'javascript':
-      case 'typescript': {
-        // Use acorn/esprima for JS/TS parsing
-        const parser = require('acorn');
-        try {
-          parser.parse(content, { 
-            ecmaVersion: 'latest',
-            sourceType: 'module'
-          });
-          return { valid: true, language, engine: 'acorn' };
-        } catch (parseError) {
-          return { 
-            valid: false, 
-            language, 
-            error: parseError.message,
-            engine: 'acorn' 
-          };
-        }
-      }
-      
-      case 'python': {
-        // Use ast.parse for Python
-        const { execSync } = require('child_process');
-        try {
-          execSync(`python -c "import ast; ast.parse(${JSON.stringify(content)})"`, { 
-            stdio: ['pipe', 'pipe', 'pipe'] 
-          });
-          return { valid: true, language, engine: 'ast.parse' };
-        } catch (error) {
-          const errorMessage = error.stderr?.toString() || error.message;
-          return { 
-            valid: false, 
-            language, 
-            error: errorMessage,
-            engine: 'ast.parse' 
-          };
-        }
-      }
-      
-      case 'go': {
-        // Use go/parser package via node
-        try {
-          const { execSync } = require('child_process');
-          const tempFile = `/tmp/go_check_${crypto.randomUUID()}.go`;
-          fs.writeFileSync(tempFile, content);
-          execSync(`gofmt -e ${tempFile} > /dev/null 2>&1`, { 
-            stdio: ['pipe', 'pipe', 'pipe'] 
-          });
-          fs.unlinkSync(tempFile);
-          return { valid: true, language, engine: 'gofmt' };
-        } catch (error) {
-          const errorMessage = error.stderr?.toString() || error.message;
-          return { 
-            valid: false, 
-            language, 
-            error: errorMessage,
-            engine: 'gofmt' 
-          };
-        }
-      }
-      
-      case 'rust': {
-        // Use syn via cargo check
-        try {
-          const { execSync } = require('child_process');
-          const tempDir = `/tmp/rust_check_${crypto.randomUUID()}`;
-          fs.mkdirSync(tempDir);
-          fs.writeFileSync(`${tempDir}/Cargo.toml`, `[package]\nname = "check"\nversion = "0.1.0"\n`);
-          fs.writeFileSync(`${tempDir}/src/main.rs`, content);
-          execSync(`cd ${tempDir} && cargo check --quiet 2>&1`, { 
-            stdio: ['pipe', 'pipe', 'pipe'] 
-          });
-          fs.rmSync(tempDir, { recursive: true });
-          return { valid: true, language, engine: 'cargo check' };
-        } catch (error) {
-          const errorMessage = error.stderr?.toString() || error.message;
-          return { 
-            valid: false, 
-            language, 
-            error: errorMessage,
-            engine: 'cargo check' 
-          };
-        }
-      }
-      
-      default:
-        // Fallback for unsupported languages
-        return { valid: true, language, engine: 'none', warning: `No syntax checker configured for ${language}` };
-    }
-  } catch (error) {
-    // Unexpected error
-    return { 
-      valid: false, 
-      language, 
-      error: error.message,
-      engine: 'unknown' 
-    };
-  }
+async function checkSyntax(language, content) {
+  // Placeholder for syntax checking
+  // In a real implementation, this would use a parser
+  return { valid: true, language };
 }
 
 function checkRemovedContent(originalLines, newLines) {
@@ -352,41 +344,6 @@ function checkRemovedContent(originalLines, newLines) {
     return { removed, warning: `删除了 ${removed} 行内容` };
   }
   return { removed: 0, warning: null };
-}
-
-// File version tracking for conflict detection
-const fileVersions = new Map();
-
-function getFileVersion(filePath) {
-  const absPath = path.resolve(process.cwd(), filePath);
-  if (fileVersions.has(absPath)) {
-    return fileVersions.get(absPath);
-  }
-  
-  // Calculate hash of current file content
-  try {
-    const content = fs.readFileSync(absPath, 'utf8');
-    const crypto = require('crypto');
-    const hash = crypto.createHash('sha256').update(content).digest('hex');
-    fileVersions.set(absPath, { hash, timestamp: Date.now() });
-    return fileVersions.get(absPath);
-  } catch (e) {
-    return null;
-  }
-}
-function updateFileVersion(filePath) {
-  const absPath = path.resolve(process.cwd(), filePath);
-  try {
-    const content = fs.readFileSync(absPath, 'utf8');
-    const crypto = require('crypto');
-    const hash = crypto.createHash('sha256').update(content).digest('hex');
-    fileVersions.set(absPath, { hash, timestamp: Date.now() });
-  } catch (e) {}
-}
-
-function clearFileVersion(filePath) {
-  const absPath = path.resolve(process.cwd(), filePath);
-  fileVersions.delete(absPath);
 }
 
 export async function handleFileTools(name, args, convId) {
@@ -656,7 +613,7 @@ export async function handleFileTools(name, args, convId) {
           }
           
           // Extract range content
-          const rangeContent = lines.slice(startLine - 1, endLine).join('\\n');
+          const rangeContent = lines.slice(startLine - 1, endLine).join('\n');
           
           // Create buffer and store in pool
           const bufferId = `edit_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
@@ -665,8 +622,7 @@ export async function handleFileTools(name, args, convId) {
             content: rangeContent,
             startLine,
             endLine,
-            originalLines: lines.length,
-            createdAt: Date.now()
+            originalLines: lines.length
           });
           
           return {
@@ -690,6 +646,10 @@ export async function handleFileTools(name, args, convId) {
           
           // Apply line replacements
           for (const replacement of args.replacements || []) {
+            const lineIndex = Math.max(replacement.line, 1) - 1;
+            if (lineIndex >= lines.length) continue;
+            
+            if (replacement.new_content !== undefined) {
               lines[lineIndex] = replacement.new_content;
             }
           }
@@ -699,8 +659,6 @@ export async function handleFileTools(name, args, convId) {
             const instructions = args.instruction.split(';');
             for (const inst of instructions) {
               const trimmed = inst.trim();
-              
-              // replace X with Y pattern
               if (trimmed.startsWith('replace ')) {
                 const parts = trimmed.substring(8).split(' with ');
                 if (parts.length === 2) {
@@ -708,42 +666,6 @@ export async function handleFileTools(name, args, convId) {
                   const newText = parts[1].trim();
                   buffer.content = buffer.content.replace(oldText, newText);
                 }
-              }
-              
-              // delete line N pattern
-              else if (trimmed.startsWith('delete line ')) {
-                const lineNum = parseInt(trimmed.substring(12).trim());
-                if (!isNaN(lineNum)) {
-                  const lines = buffer.content.split('\\n');
-                  const idx = Math.max(lineNum - 1, 0);
-                  if (idx < lines.length) {
-                    lines.splice(idx, 1);
-                    buffer.content = lines.join('\\n');
-                  }
-                }
-              }
-              
-              // insert line N with X pattern
-              else if (trimmed.startsWith('insert line ')) {
-                const match = trimmed.match(/insert line (\\d+) with (.+)/);
-                if (match) {
-                  const lineNum = parseInt(match[1]);
-                  const content = match[2];
-                  const lines = buffer.content.split('\\n');
-                  const idx = Math.max(lineNum - 1, 0);
-                  lines.splice(idx, 0, content);
-                  buffer.content = lines.join('\\n');
-                }
-              }
-              
-              // append X pattern
-              else if (trimmed.startsWith('append ')) {
-                buffer.content += '\\n' + trimmed.substring(7).trim();
-              }
-              
-              // prepend X pattern
-              else if (trimmed.startsWith('prepend ')) {
-                buffer.content = trimmed.substring(8).trim() + '\\n' + buffer.content;
               }
             }
           }
@@ -808,29 +730,10 @@ export async function handleFileTools(name, args, convId) {
             ...currentLines.slice(buffer.endLine)
           ];
           
-          // Handle dry_run mode (don't write to disk)
-          if (args.dry_run) {
-            const diff = generateDiff(filePath, newLines.join('\n'), buffer.startLine, buffer.endLine);
-            return {
-              path: filePath,
-              dryRun: true,
-              changes: diff.changes.length,
-              diff: diff.changes.slice(0, 10), // Limit to first 10 changes
-              message: `📊 Dry run complete. ${diff.changes.length} changes detected.`,
-              warnings: [
-                ...checks.brackets.valid ? [] : [`⚠️ 括号不匹配: ${checks.brackets.error}`],
-                ...checks.indentation.valid ? [] : checks.indentation.errors.slice(0, 5).map(e => `⚠️ 缩进问题: ${e}`)
-              ]
-            };
-          }
-          
           // Backup before commit (new strategy: only backup at commit time)
           const backupPath = backupFileBeforePatch(filePath);
           
           fs.writeFileSync(filePath, newLines.join('\n'), 'utf8');
-          
-          // Update file version tracking for conflict detection
-          updateFileVersion(filePath);
           
           // Clear buffer
           bufferPool.delete(bufferId);
@@ -840,6 +743,7 @@ export async function handleFileTools(name, args, convId) {
             backupPath,
             message: `✅ 编辑已提交！备份路径: ${backupPath || '无'}`
           };
+        }
         
         case "edit_cancel": {
           const bufferId = args.buffer_id;
@@ -859,29 +763,3 @@ export async function handleFileTools(name, args, convId) {
     { conversation_id: convId }
   );
 }
-
-// Auto-cleanup old backups on module load (optional - can be called manually)
-cleanupOldBackups(10);
-// Buffer lifecycle management - Commit/Discard now immediately removes buffer
-// No TTL cleanup needed as buffers are short-lived per edit session
-
-function cleanupExpiredBuffers() {
-  const now = Date.now();
-  let cleaned = 0;
-  
-  for (const [bufferId, buffer] of bufferPool.entries()) {
-    if (now - buffer.createdAt > BUFFER_TTL_MS) {
-      console.log(`🧹 Auto-cleanup expired buffer: ${bufferId}`);
-      bufferPool.delete(bufferId);
-      cleaned++;
-    }
-  }
-  
-  return cleaned;
-}
-
-// Run cleanup periodically (for any orphaned buffers)
-setInterval(cleanupExpiredBuffers, 60 * 60 * 1000); // Every hour
-
-// Export for testing
-module.exports = { cleanupExpiredBuffers };

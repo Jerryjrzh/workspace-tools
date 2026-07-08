@@ -72,6 +72,10 @@ export async function handleSessionStart(args) {
       } else {
         out += `*No manually archived summary.*\n`;
         if (convSummary.userMessages.length > 0) {
+          out += `\n**[Auto-extracted last conversation]**:\n\`\`\`\n${convSummary.userMessages.join('\n')}\n\`\`\`\n`;
+        }
+      }
+
       // Task rules detection and auto-loading
       let detectedTask = null;
       let taskRulesContent = "";
@@ -134,7 +138,7 @@ export async function handleSessionStart(args) {
             
             if (availableTasks.length > 0) {
               out += `\\n### 📚 Available Task Rules\\n`;
-              out += `System detected: [ ${availableTasks.join(\", \")} ]\\n`;
+              out += `System detected: [ ${availableTasks.join(", ")} ]\\n`;
               out += `→ Please call load_task_rules(task=\"...\") for corresponding rules.\\n\\n`;
             }
           }
@@ -176,7 +180,7 @@ export async function handleSessionStart(args) {
     throw new Error(`Session start failed: ${error.message}`);
   }
 }
-
+  
 // Helper function to load workspace log (simplified version)
 function loadWorkspaceLog(ws) {
   try {

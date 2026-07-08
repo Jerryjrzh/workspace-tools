@@ -414,7 +414,13 @@ export async function handleFileTools(name, args, convId) {
           // Extract the actual content for this range
           const rangeContent = lines.slice(startLine - 1, endLine).join('\n');
           
-          // Return EditBuffer object instead of plain string
+          // For full mode, return plain text (most common use case)
+          // For context/range modes, return EditBuffer for potential editing
+          if (args.mode === "full" || (args.start_line === undefined && args.end_line === undefined)) {
+            return rangeContent;
+          }
+          
+          // Return EditBuffer object for context/range modes
           return {
             bufferId: `buf_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
             path: filePath,

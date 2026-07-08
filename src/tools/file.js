@@ -3,7 +3,6 @@ import { workspaceManager } from '../managers/workspace.js';
 import { ToolMiddleware } from '../utils/middleware.js';
 import fs from 'fs';
 import path from 'path';
-import os from 'os';
 
 // Backup directory constant
 const BACKUP_DIR = '.lmstudio-backups';
@@ -809,4 +808,4 @@ function cleanupExpiredBuffers() {
 setInterval(cleanupExpiredBuffers, 60 * 60 * 1000); // Every hour
 
 // Export for testing
-module.exports = { cleanupExpiredBuffers, handleFileTools };
+export { cleanupExpiredBuffers };

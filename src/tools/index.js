@@ -1,17 +1,30 @@
 // Consolidated tool exports from all tool modules
 
-import { workspaceTools, handleWorkspaceTools } from './workspace.js';
-import { fileTools, handleFileTools } from './file.js';
-import { gitTools, handleGitTools } from './git.js';
-import { shellTools, handleShellTools } from './shell.js';
-import { taskTools, handleTaskTools } from './task.js';
-import { contextTools, handleContextTools } from './context.js';
-import { contextLoadTools, handleContextLoadTools } from './context_load.js';
-import { embeddingTools, handleEmbeddingTools } from './embedding.js';
-import { reviewTools, handleReviewTools } from './review.js';
-import { tmuxTools, handleTmuxTools } from './tmux.js';
-import { sessionTools, handleSessionTools } from './session.js';
-import { envTools, handleEnvTools } from './env.js';
+const { workspaceTools } = require('./workspace.js');
+const { fileTools } = require('./file.js');
+const { gitTools } = require('./git.js');
+const { shellTools } = require('./shell.js');
+const { taskTools } = require('./task.js');
+const { contextTools } = require('./context.js');
+const { contextLoadTools } = require('./context_load.js');
+const { embeddingTools } = require('./embedding.js');
+const { reviewTools } = require('./review.js');
+const { tmuxTools } = require('./tmux.js');
+const { sessionTools } = require('./session.js');
+const { envTools } = require('./env.js');
+
+const { handleWorkspaceTools } = require('./workspace.js');
+const { handleFileTools } = require('./file.js');
+const { handleGitTools } = require('./git.js');
+const { handleShellTools } = require('./shell.js');
+const { handleTaskTools } = require('./task.js');
+const { handleContextTools } = require('./context.js');
+const { handleContextLoadTools } = require('./context_load.js');
+const { handleEmbeddingTools } = require('./embedding.js');
+const { handleReviewTools } = require('./review.js');
+const { handleTmuxTools } = require('./tmux.js');
+const { handleSessionTools } = require('./session.js');
+const { handleEnvTools } = require('./env.js');
 
 /**
  * Route tool calls to appropriate handlers based on tool name

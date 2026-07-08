@@ -362,7 +362,7 @@ export async function handleFileTools(name, args, convId) {
           let content = fs.readFileSync(filePath, 'utf8');
           const lines = content.split('\n');
           const totalLines = lines.length;
-          
+
           // Handle different modes
           let startLine = 1;
           let endLine = totalLines;
@@ -712,36 +712,7 @@ export async function handleFileTools(name, args, convId) {
         
         case "edit_commit": {
           const bufferId = args.buffer_id;
-          if (!bufferPool.has(bufferId)) {
-            return `❌ Buffer 不存在: ${bufferId}`;
-          }
-          
-          const buffer = bufferPool.get(bufferId);
-          
-          // Read current file content
-          const filePath = path.resolve(ws || process.cwd(), buffer.path);
-          let currentContent = fs.readFileSync(filePath, 'utf8');
-          const currentLines = currentContent.split('\n');
-          
-          // Replace the range with buffer content
-          const newLines = [
-            ...currentLines.slice(0, buffer.startLine - 1),
-            ...buffer.content.split('\n'),
-            ...currentLines.slice(buffer.endLine)
-          ];
-          
-          // Backup before commit (new strategy: only backup at commit time)
-          const backupPath = backupFileBeforePatch(filePath);
-          
-          fs.writeFileSync(filePath, newLines.join('\n'), 'utf8');
-          
-          // Clear buffer
-          bufferPool.delete(bufferId);
-          
-          return {
-            path: filePath,
-            backupPath,
-            message: `✅ 编辑已提交！备份路径: ${backupPath || '无'}`
+
           };
         }
         
@@ -753,13 +724,3 @@ export async function handleFileTools(name, args, convId) {
           }
           return `⚠️ Buffer 不存在: ${bufferId}`;
         }
-        
-        default:
-          throw new Error(`未知文件工具: ${name}`);
-      }
-    },
-    name,
-    args,
-    { conversation_id: convId }
-  );
-}

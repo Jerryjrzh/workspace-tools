@@ -78,13 +78,15 @@ export async function handleEnvTools(name, args, convId) {
         if (Object.keys(results.commands).length) {
           out += "\\n命令:\\n";
           for (const [cmd, r] of Object.entries(results.commands)) {
-            out += r.available ? `  ✅ ${cmd}: ${r.path}\\n` : `  ❌ ${cmd}: 未安装  → ${r.hint || \"\"}\\n`;
+            const hint = r.hint || "";
+            out += r.available ? `  ✅ ${cmd}: ${r.path}\n` : `  ❌ ${cmd}: 未安装  → ${hint}\n`;
           }
         }
         if (Object.keys(results.python_modules).length) {
           out += "\\nPython 模块:\\n";
           for (const [mod, r] of Object.entries(results.python_modules)) {
-            out += r.available ? `  ✅ ${mod}: 可用\\n` : `  ❌ ${mod}: 不可用  → ${r.hint || \"\"}\\n`;
+            const hint = r.hint || "";
+            out += r.available ? `  ✅ ${mod}: 可用\n` : `  ❌ ${mod}: 不可用  → ${hint}\n`;
           }
         }
         if (Object.keys(results.ports).length) {

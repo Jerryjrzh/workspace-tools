@@ -346,6 +346,26 @@ function checkRemovedContent(originalLines, newLines) {
   return { removed: 0, warning: null };
 }
 
+// File version tracking for conflict detection
+const fileVersions = new Map();
+
+function updateFileVersion(filePath) {
+  try {
+    const stats = fs.statSync(filePath);
+    fileVersions.set(filePath, {
+      mtime: stats.mtimeMs,
+      size: stats.size
+    });
+  } catch (e) {
+    // File may have been deleted
+    fileVersions.delete(filePath);
+  }
+}
+
+function getFileVersion(filePath) {
+  return fileVersions.get(filePath);
+}
+
 export async function handleFileTools(name, args, convId) {
   // Use middleware for security and context
   return await ToolMiddleware.executeWithMiddleware(
@@ -712,7 +732,39 @@ export async function handleFileTools(name, args, convId) {
         
         case "edit_commit": {
           const bufferId = args.buffer_id;
-
+          if (!bufferPool.has(bufferId)) {
+            return `❌ Buffer 不存在: ${bufferId}`;
+          }
+          
+          const buffer = bufferPool.get(bufferId);
+          
+          // Read current file content
+          const filePath = path.resolve(ws || process.cwd(), buffer.path);
+          let currentContent = fs.readFileSync(filePath, 'utf8');
+          const currentLines = currentContent.split('\n');
+          
+          // Replace the range with buffer content
+          const newLines = [
+            ...currentLines.slice(0, buffer.startLine - 1),
+            ...buffer.content.split('\n'),
+            ...currentLines.slice(buffer.endLine)
+          ];
+          
+          // Backup before commit (new strategy: only backup at commit time)
+          const backupPath = backupFileBeforePatch(filePath);
+          
+          fs.writeFileSync(filePath, newLines.join('\n'), 'utf8');
+          
+          // Update file version tracking for conflict detection
+          updateFileVersion(filePath);
+          
+          // Clear buffer
+          bufferPool.delete(bufferId);
+          
+          return {
+            path: filePath,
+            backupPath,
+            message: `✅ 编辑已提交！备份路径: ${backupPath || '无'}`
           };
         }
         
@@ -724,3 +776,37 @@ export async function handleFileTools(name, args, convId) {
           }
           return `⚠️ Buffer 不存在: ${bufferId}`;
         }
+        
+        default:
+          throw new Error(`未知文件工具: ${name}`);
+      }
+    },
+    name,
+    args,
+    { conversation_id: convId }
+  );
+}
+
+// Buffer lifecycle management
+const BUFFER_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+function cleanupExpiredBuffers() {
+  const now = Date.now();
+  let cleaned = 0;
+  
+  for (const [bufferId, buffer] of bufferPool.entries()) {
+    if (now - buffer.createdAt > BUFFER_TTL_MS) {
+      console.log(`🧹 Auto-cleanup expired buffer: ${bufferId}`);
+      bufferPool.delete(bufferId);
+      cleaned++;
+    }
+  }
+  
+  return cleaned;
+}
+
+// Run cleanup periodically
+setInterval(cleanupExpiredBuffers, 60 * 60 * 1000); // Every hour
+
+// Export for testing
+module.exports = { cleanupExpiredBuffers, handleFileTools };

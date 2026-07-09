@@ -148,8 +148,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
   const { name, arguments: args } = request.params;
   try {
     const result = await handleTool(name, args || {}, extra);
-    // In a real implementation, we would log the operation here
-["    const textResult = typeof result === 'object' ? JSON.stringify(result, null, 2) : String(result);", "    return { content: [{ type: \"text\", text: textResult }] };"]
+    // 必须增加类型判断，强制标准化
+    const standardizedText = typeof result === 'object' ? JSON.stringify(result, null, 2) : String(result);
+    
+    return { content: [{ type: "text", text: standardizedText }] };
   } catch (err) {
     // In a real implementation, we would log the error here
     return { content: [{ type: "text", text: `❌ ${err.message}` }], isError: true };

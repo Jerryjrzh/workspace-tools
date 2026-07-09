@@ -136,13 +136,8 @@ export async function handleSessionTools(name, args, convId) {
     }
     case "session_start": {
       try {
-        const details = await handleSessionStart(args,convId);
-        return {
-          status: "READY",
-          workspace: args.workspace || "managed_by_session",
-          message: "Session initialized successfully",
-          details: details
-        };
+        return await handleSessionStart(args,convId);
+         
       } catch (error) {
         return `❌ Session start failed: ${error.message}`;
       }

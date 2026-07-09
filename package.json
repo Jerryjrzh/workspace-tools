@@ -1,6 +1,6 @@
 {
   "name": "lmstudio-workspace-tools",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "LM Studio workspace awareness + local system commands MCP server",
   "main": "server.js",
   "type": "module",

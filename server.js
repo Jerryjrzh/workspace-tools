@@ -138,7 +138,7 @@ function getWorkspace() {
  * MCP Server ────────────────────────────────────────────────────────────────
  */
 const server = new Server(
-  { name: "workspace-tools", version: "2.0.0" },
+  { name: "workspace-tools", version: "1.0.1" },
   { capabilities: { tools: {} } }
 );
 

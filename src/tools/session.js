@@ -135,12 +135,19 @@ export async function handleSessionTools(name, args, convId) {
       }
     }
     case "session_start": {
-["        const details = await handleSessionStart(args);", "        return {", "           status: \"READY\",", "           workspace: args.workspace || \"managed_by_session\",", "           message: \"Session initialized successfully\",", "           details: details", "         };"]
-        return result;
+      try {
+        const details = await handleSessionStart(args);
+        return {
+          status: "READY",
+          workspace: args.workspace || "managed_by_session",
+          message: "Session initialized successfully",
+          details: details
+        };
       } catch (error) {
         return `❌ Session start failed: ${error.message}`;
       }
-    
+    }
+
     default:
       throw new Error(`未知会话工具: ${name}`);
   }

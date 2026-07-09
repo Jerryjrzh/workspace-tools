@@ -30,14 +30,34 @@ class WorkspaceManager {
     if (!fs.existsSync(resolvedPath)) throw new Error(`路径不存在: ${resolvedPath}`);
     if (!fs.statSync(resolvedPath).isDirectory()) throw new Error(`不是目录: ${resolvedPath}`);
 
-    state.sessions[convId] = {
-      workspace: resolvedPath,
-      updatedAt: new Date().toISOString()
-    };
-    // Removed globalLast assignment - no longer tracking global fallback
+    // Initialize session entry if not exists
+    if (!state.sessions[convId]) {
+      state.sessions[convId] = {
+        updatedAt: new Date().toISOString()
+      };
+    }
+
+    state.sessions[convId].workspace = resolvedPath;
+    state.sessions[convId].updatedAt = new Date().toISOString();
     
     fs.writeFileSync(STATE_DB, JSON.stringify(state, null, 2), 'utf8');
     return resolvedPath;
+  }
+
+  // Set initialization status and detected task for a session
+  setSessionInitStatus(convId, initialized, task = null) {
+    this.ensureStateFile();
+    const state = JSON.parse(fs.readFileSync(STATE_DB, 'utf8'));
+
+    if (!state.sessions[convId]) {
+      state.sessions[convId] = {};
+    }
+
+    state.sessions[convId].initialized = initialized;
+    state.sessions[convId].task = task;
+    state.sessions[convId].updatedAt = new Date().toISOString();
+    
+    fs.writeFileSync(STATE_DB, JSON.stringify(state, null, 2), 'utf8');
   }
 
   // Get workspace that definitely belongs to current context
@@ -51,6 +71,20 @@ class WorkspaceManager {
     // Removed fallback to global last active path - now requires explicit session context
     // Return undefined or throw error to force explicit workspace setting
     return undefined; 
+  }
+
+  // Get initialization status for a session
+  getSessionInitStatus(convId) {
+    this.ensureStateFile();
+    const state = JSON.parse(fs.readFileSync(STATE_DB, 'utf8'));
+    const session = state.sessions[convId];
+    if (!session) {
+      return { initialized: false };
+    }
+    return {
+      initialized: !!session.initialized,
+      task: session.task || null
+    };
   }
 
   // Legacy compatibility - get workspace without session context

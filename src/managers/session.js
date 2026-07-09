@@ -158,6 +158,7 @@ export async function handleSessionStart(args) {
         console.warn('Task rules detection failed:', e.message);
         out += `\\n⚠️ Task rules detection encountered an error: ${e.message}\\n\\n`;
       }
+      workspaceManager.setSessionInitStatus(convId, true, detectedTask);
       out += `
 ### 📜 Global Rules
 `;

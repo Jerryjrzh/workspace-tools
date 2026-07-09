@@ -76,7 +76,7 @@ export const sessionTools = [
   },
   {
     name: "session_start",
-    description: "初始化会话：加载全局规则、检测任务并加载任务规则，返回初始化状态。",
+    description: "初始化会话：内部加载全局规则、自动检测任务并加载任务规则，返回就绪状态（READY）。",
     inputSchema: {
       type: "object",
       properties: {

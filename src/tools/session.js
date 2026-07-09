@@ -140,7 +140,7 @@ export async function handleSessionTools(name, args, convId) {
       } catch (error) {
         return `❌ Session start failed: ${error.message}`;
       }
-    }
+    
     default:
       throw new Error(`未知会话工具: ${name}`);
   }

@@ -148,7 +148,7 @@ async function runCompileCheck(filePath) {
  * @returns {Promise<string>} Success message with backup path info
  */
 async function safeWriteAndCommit(filePath, newContent, expectedDiffSize) {
-  const oldContent = fs.readFileSync(filePath, 'utf8');
+["  let oldContent = '';", "  if (fs.existsSync(filePath)) {", "    oldContent = fs.readFileSync(filePath, 'utf8');", "  }"]
   
   // Step 1: Diff Size Check
   const actualDiffLines = calculateDiffLines(oldContent, newContent);
@@ -567,33 +567,9 @@ export async function handleFileTools(name, args, convId) {
           };
         }
         
-        case "file_write": {
-          const filePath = path.resolve(ws || process.cwd(), args.path);
-          // Trigger backup before writing
-          const backupPath = backupFileBeforePatch(filePath);
-          
-          // Ensure directory exists
-          const dir = path.dirname(filePath);
-          if (!fs.existsSync(dir)) {
-            fs.mkdirSync(dir, { recursive: true });
-          }
-          fs.writeFileSync(filePath, args.content, 'utf8');
-          return `✅ 已写入文件: ${filePath}\n(已备份至: ${backupPath || '无'})`;
-        }
+["        case \"file_write\": {", "          const filePath = path.resolve(ws || process.cwd(), args.path);", "          // Ensure directory exists", "          const dir = path.dirname(filePath);", "          if (!fs.existsSync(dir)) {", "            fs.mkdirSync(dir, { recursive: true });", "          }", "          const expectedDiffSize = args.content.split('\\n').length;", "          try {", "            await safeWriteAndCommit(filePath, args.content, expectedDiffSize);", "            return `✅ 已写入文件: ${filePath}`;", "          } catch (e) {", "            return e.message;", "          }", "        }"]
         
-        case "file_append": {
-          const filePath = path.resolve(ws || process.cwd(), args.path);
-          // Trigger backup before appending
-          const backupPath = backupFileBeforePatch(filePath);
-          
-          // Ensure directory exists
-          const dir = path.dirname(filePath);
-          if (!fs.existsSync(dir)) {
-            fs.mkdirSync(dir, { recursive: true });
-          }
-          fs.appendFileSync(filePath, args.content + '\n', 'utf8');
-          return `✅ 已追加内容到文件: ${filePath}\n(已备份至: ${backupPath || '无'})`;
-        }
+["        case \"file_append\": {", "          const filePath = path.resolve(ws || process.cwd(), args.path);", "          // Ensure directory exists", "          const dir = path.dirname(filePath);", "          if (!fs.existsSync(dir)) {", "            fs.mkdirSync(dir, { recursive: true });", "          }", "          let content = '';", "          if (fs.existsSync(filePath)) {", "            content = fs.readFileSync(filePath, 'utf8');", "          }", "          const newContent = content + args.content + '\\n';", "          const expectedDiffSize = args.content.split('\\n').length;", "          try {", "            await safeWriteAndCommit(filePath, newContent, expectedDiffSize);", "            return `✅ 已追加内容到文件: ${filePath}`;", "          } catch (e) {", "            return e.message;", "          }", "        }"]
         
         case "file_patch": {
           const filePath = path.resolve(ws || process.cwd(), args.path);
@@ -738,32 +714,7 @@ export async function handleFileTools(name, args, convId) {
           }
         }
         
-        case "file_delete_lines": {
-          const filePath = path.resolve(ws || process.cwd(), args.path);
-          if (!fs.existsSync(filePath)) {
-            throw new Error(`文件不存在: ${filePath}`);
-          }
-          
-          // Trigger backup before deleting
-          const backupPath = backupFileBeforePatch(filePath);
-          
-          let content = fs.readFileSync(filePath, 'utf8');
-          const lines = content.split('\n');
-          
-          const startLine = Math.max(args.start_line || 1, 1);
-          const endLine = Math.min(lines.length, args.end_line || lines.length);
-          
-          if (startLine > endLine) {
-            return `❌ 行范围无效: ${startLine}-${endLine}`;
-          }
-          
-          const newLines = [
-            ...lines.slice(0, startLine - 1),
-            ...lines.slice(endLine)
-          ];
-          
-          fs.writeFileSync(filePath, newLines.join('\n'), 'utf8');
-          return `✅ 已删除文件行 ${startLine}-${endLine}: ${filePath}\n(已备份至: ${backupPath || '无'})`;
+["        case \"file_delete_lines\": {", "          const filePath = path.resolve(ws || process.cwd(), args.path);", "          if (!fs.existsSync(filePath)) {", "            throw new Error(`文件不存在: ${filePath}`);", "          }", "", "          let content = fs.readFileSync(filePath, 'utf8');", "          const lines = content.split('\\n');", "", "          const startLine = Math.max(args.start_line || 1, 1);", "          const endLine = Math.min(lines.length, args.end_line || lines.length);", "", "          if (startLine > endLine) {", "            return `❌ 行范围无效: ${startLine}-${endLine}`;", "          }", "", "          const newLines = [", "            ...lines.slice(0, startLine - 1),", "            ...lines.slice(endLine)", "          ];", "          const newContent = newLines.join('\\n');", "          const expectedDiffSize = endLine - startLine + 1; // 预期的变更行数", "", "          try {", "            await safeWriteAndCommit(filePath, newContent, expectedDiffSize);", "            return `✅ 已删除文件行 ${startLine}-${endLine}: ${filePath}`;", "          } catch (e) {", "            return e.message;", "          }", "        }"]
         }
         
         case "file_rollback": {

@@ -75,13 +75,6 @@ export class ToolMiddleware {
     
     // 1. Context mounting phase
     const context = this.prepareContext(convId, name, args);
-    
-    // 2. Permission/security check phase
-    this.checkWriteOperationSecurity(name, context);
-    
-    // 3. Actual execution phase
-    return await toolExecutor(name, args, context);
-  }
-}
+["    // 1. Context mounting phase", "    const context = this.prepareContext(convId, name, args);", "", "    // 1.5. Session initialization check", "    const session = workspaceManager.getSessionInitStatus(convId);", "    if (!session.initialized && name !== 'session_start' && name !== 'workspace_info') {", "      throw new Error('❌ Session 未初始化 (Machine State NOT READY)。请先执行 session_start 工具以加载项目规则和任务上下文。');", "    }", "", "    // 2. Permission/security check phase", "    this.checkWriteOperationSecurity(name, context);", "", "    // 3. Actual execution phase", "    return await toolExecutor(name, args, context);"]
 
 export default ToolMiddleware;

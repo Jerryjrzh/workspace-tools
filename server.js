@@ -149,7 +149,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
   try {
     const result = await handleTool(name, args || {}, extra);
     // In a real implementation, we would log the operation here
-    return { content: [{ type: "text", text: String(result) }] };
+["    const textResult = typeof result === 'object' ? JSON.stringify(result, null, 2) : String(result);", "    return { content: [{ type: \"text\", text: textResult }] };"]
   } catch (err) {
     // In a real implementation, we would log the error here
     return { content: [{ type: "text", text: `❌ ${err.message}` }], isError: true };

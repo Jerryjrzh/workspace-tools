@@ -1,5 +1,6 @@
 // src/tools/session.js
 import { spawn } from 'child_process';
+import { handleSessionStart } from '../managers/session.js';
 
 export const sessionTools = [
   {
@@ -72,6 +73,23 @@ export const sessionTools = [
         }
       }
     }
+  },
+  {
+    name: "session_start",
+    description: "初始化会话：加载全局规则、检测任务并加载任务规则，返回初始化状态。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        mode: { 
+          type: "string", 
+          description: "操作模式：fast（默认）或 deep" 
+        },
+        include_progress: { 
+          type: "boolean", 
+          description: "是否包含进度信息，默认 true" 
+        }
+      }
+    }
   }
 ];
 
@@ -93,13 +111,12 @@ export async function handleSessionTools(name, args, convId) {
                `🔐 端口: ${port}\\n` +
                `🪟 tmux pane: ${session}:${windowName}.0\\n` +
                (args.key_file ? `🔑 私钥文件: ${args.key_file}` : 
-                args.password ? `🔒 使用密码认证` : `🔓 使用默认SSH认证`)+
-               (args.extra_opts ? `\\n⚙️ 额外选项: ${args.extra_opts}` : '');
+                args.password ? `🔒 使用密码认证` : `🔓 使用默认SSH认证`) +
+               (args.extra_opts ? `\n⚙️ 额外选项: ${args.extra_opts}` : '');
       } catch (error) {
         return `❌ SSH 会话建立失败: ${error.message}`;
       }
     }
-    
     case "serial_session": {
       try {
         // 在实际实现中，这里会启动minicom串口会话并在tmux窗口中运行
@@ -117,7 +134,14 @@ export async function handleSessionTools(name, args, convId) {
         return `❌ 串口会话启动失败: ${error.message}`;
       }
     }
-    
+    case "session_start": {
+      try {
+        const result = await handleSessionStart(args);
+        return result;
+      } catch (error) {
+        return `❌ Session start failed: ${error.message}`;
+      }
+    }
     default:
       throw new Error(`未知会话工具: ${name}`);
   }

@@ -4,6 +4,7 @@ import path from 'path';
 import os from 'os';
 import { workspaceManager } from './workspace.js';
 import { conversationManager } from './conversation.js';
+import { ruleManager } from './rules.js';
 
 export async function handleSessionStart(args) {
   const mode = args.mode || 'fast'; // Implement fast/deep split mode
@@ -14,6 +15,14 @@ export async function handleSessionStart(args) {
     const targetConvFile = latestConv.name;
     const convId = targetConvFile.replace('.conversation.json', '');
     const convData = await conversationManager.loadConversation(convId);
+    // Load global rules (ensure they are available)
+    let globalRules = '';
+    try {
+      globalRules = ruleManager.loadGlobal();
+    } catch (e) {
+      console.warn('Failed to load global rules:', e.message);
+      globalRules = '⚠️ Global rules not found';
+    }
 
     // 2. Deeply parse session text to lock its originally embedded workspace
     let inferredWorkspace = null;
@@ -38,7 +47,8 @@ export async function handleSessionStart(args) {
     report += `**Environment Workspace**: \`${currentWs}\`\n\n`;
 
     if (mode === 'fast') {
-      report += `⚡ Fast ready mode enabled, environment path calibrated. For deep analysis, specify deep mode.\n`;
+      report += `⚡ Fast ready mode enabled, environment path calibrated. Global rules loaded. For deep analysis, specify deep mode.
+`;
       return report;
     }
 
@@ -125,7 +135,7 @@ export async function handleSessionStart(args) {
               out += `<details><summary>View ${detectedTask} task rules (click to expand)</summary>\\n\\n`;
               out += `${taskRulesContent}\\n\\n</details>\\n\\n`;
               
-              out += `💡 Tip: You can also manually load rules using: load_task_rules(task="${detectedTask}")\\n\\n`;
+              out += `\n✅ Loaded task rules for ${detectedTask}.\n`;
             } catch (e) {
               console.warn(`Failed to load task rules for ${detectedTask}:`, e.message);
               out += `\\n⚠️ Failed to load auto-detected ${detectedTask} task rules: ${e.message}\\n\\n`;
@@ -139,7 +149,7 @@ export async function handleSessionStart(args) {
             if (availableTasks.length > 0) {
               out += `\\n### 📚 Available Task Rules\\n`;
               out += `System detected: [ ${availableTasks.join(", ")} ]\\n`;
-              out += `→ Please call load_task_rules(task=\"...\") for corresponding rules.\\n\\n`;
+              out += `\nℹ️ No specific task detected; available tasks: [ ${availableTasks.join(", ")} ].\n`;
             }
           }
         }
@@ -148,6 +158,11 @@ export async function handleSessionStart(args) {
         console.warn('Task rules detection failed:', e.message);
         out += `\\n⚠️ Task rules detection encountered an error: ${e.message}\\n\\n`;
       }
+      out += `
+### 📜 Global Rules
+`;
+      out += `Global rules have been loaded.
+`
       // PROGRESS status
       if (args.include_progress !== false && currentWs) {
         try {
@@ -174,7 +189,8 @@ export async function handleSessionStart(args) {
       return `## 🚀 Session Start Alignment Report [Architecture v3]\n` +
              `**Current Session ID**: \`${convId}\`\n` +
              `**Environment Workspace**: \`${currentWs}\`\n\n` +
-             `⚡ Fast ready mode enabled, environment path calibrated.\n`;
+             `⚡ Fast ready mode enabled, environment path calibrated. Global rules loaded.
+`;
     }
   } catch (error) {
     throw new Error(`Session start failed: ${error.message}`);

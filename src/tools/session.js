@@ -136,7 +136,7 @@ export async function handleSessionTools(name, args, convId) {
     }
     case "session_start": {
       try {
-        const details = await handleSessionStart(args);
+        const details = await handleSessionStart(args,convId);
         return {
           status: "READY",
           workspace: args.workspace || "managed_by_session",

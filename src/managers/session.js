@@ -19,15 +19,25 @@ function loadWorkspaceLog(ws) {
   return { sessions: [] };
 }
 
-export async function handleSessionStart(args) {
+export async function handleSessionStart(args, passedConvId) {
   const mode = args.mode || 'fast'; // Implement fast/deep split mode
-
+  const sessionId = passedConvId || 'default';
   try {
-    // 1. Retrieve physical disk conversation source file closest to active state
-    const latestConv = await conversationManager.getLatestConversation();
-    const targetConvFile = latestConv.name;
-    const convId = targetConvFile.replace('.conversation.json', '');
-    const convData = await conversationManager.loadConversation(convId);
+    
+    const convData = { messages: [] };
+    try {
+      if (sessionId !== 'default') {
+        // 如果有明确的 ID，读对应的会话文件
+        convData = await conversationManager.loadConversation(sessionId);
+      } else {
+        // 如果是 default，尝试找最新的文件来分析 (仅用于提取上下文，不影响状态绑定的 ID)
+        const latestConv = await conversationManager.getLatestConversation();
+        const targetConvFile = latestConv.name;
+        convData = await conversationManager.loadConversation(targetConvFile.replace('.conversation.json', ''));
+      }
+    } catch (e) {
+      console.warn('无法加载历史会话，跳过上下文推断:', e.message);
+    }
     
     // 2. Deeply parse session text to lock its originally embedded workspace
     let inferredWorkspace = null;

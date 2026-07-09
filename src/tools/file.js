@@ -715,7 +715,7 @@ export async function handleFileTools(name, args, convId) {
         }
         
 ["        case \"file_delete_lines\": {", "          const filePath = path.resolve(ws || process.cwd(), args.path);", "          if (!fs.existsSync(filePath)) {", "            throw new Error(`文件不存在: ${filePath}`);", "          }", "", "          let content = fs.readFileSync(filePath, 'utf8');", "          const lines = content.split('\\n');", "", "          const startLine = Math.max(args.start_line || 1, 1);", "          const endLine = Math.min(lines.length, args.end_line || lines.length);", "", "          if (startLine > endLine) {", "            return `❌ 行范围无效: ${startLine}-${endLine}`;", "          }", "", "          const newLines = [", "            ...lines.slice(0, startLine - 1),", "            ...lines.slice(endLine)", "          ];", "          const newContent = newLines.join('\\n');", "          const expectedDiffSize = endLine - startLine + 1; // 预期的变更行数", "", "          try {", "            await safeWriteAndCommit(filePath, newContent, expectedDiffSize);", "            return `✅ 已删除文件行 ${startLine}-${endLine}: ${filePath}`;", "          } catch (e) {", "            return e.message;", "          }", "        }"]
-        }
+        
         
         case "file_rollback": {
           return await handleFileRollback(args, ws);

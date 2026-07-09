@@ -88,6 +88,7 @@ export const toolHandlers = {
   // Session tools
   ssh_session: handleSessionTools,
   serial_session: handleSessionTools,
+  session_start: handleSessionTools,
   
   // Env tools
   env_check: handleEnvTools

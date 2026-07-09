@@ -40,6 +40,146 @@ function backupFileBeforePatch(filePath) {
   }
 }
 
+// ============================================================
+// Release Guard - Safe Write Pipeline (V1.5 部署稳定器)
+// ============================================================
+
+/** Maximum allowed diff lines for a single modification */
+const MAX_DIFF_LINES = 50;
+
+/**
+ * Calculate the number of changed lines between old and new content
+ * @param {string} oldContent - Original file content
+ * @param {string} newContent - New file content  
+ * @returns {number} Number of changed lines
+ */
+function calculateDiffLines(oldContent, newContent) {
+  const oldLines = oldContent.split('\n');
+  const newLines = newContent.split('\n');
+  let diffCount = 0;
+  
+  for (let i = 0; i < Math.max(oldLines.length, newLines.length); i++) {
+    if (oldLines[i] !== newLines[i]) {
+      diffCount++;
+    }
+  }
+  
+  return diffCount;
+}
+
+/**
+ * Run syntax/compile check on a file based on its extension
+ * @param {string} filePath - Path to the file to check
+ * @returns {Promise<void>} Resolves if check passes, rejects with error message
+ */
+async function runCompileCheck(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  
+  // Only check JavaScript/TypeScript files (most critical for syntax errors)
+  if (!['.js', '.mjs', '.cjs', '.ts'].includes(ext)) {
+    return; // No compile check needed for other file types
+  }
+  
+  try {
+    const { execFile } = await import('child_process');
+    
+    // For .js/.mjs files, use node --check
+    if (['.js', '.mjs'].includes(ext)) {
+      return new Promise((resolve, reject) => {
+        execFile('node', ['--check', filePath], { timeout: 10000 }, (err) => {
+          if (err) {
+            reject(new Error(`Node syntax check failed for ${filePath}: ${err.message}`));
+          } else {
+            resolve();
+          }
+        });
+      });
+    }
+    
+    // For .cjs files, use node --check with explicit module type
+    if (ext === '.cjs') {
+      return new Promise((resolve, reject) => {
+        execFile('node', ['--check', filePath], { 
+          timeout: 10000,
+          env: { ...process.env, NODE_OPTIONS: '--input-type=commonjs' }
+        }, (err) => {
+          if (err) {
+            reject(new Error(`Node syntax check failed for ${filePath}: ${err.message}`));
+          } else {
+            resolve();
+          }
+        });
+      });
+    }
+    
+    // For .ts files, use tsc --noEmit if available
+    if (ext === '.ts') {
+      return new Promise((resolve, reject) => {
+        execFile('npx', ['tsc', '--noEmit', filePath], { 
+          timeout: 30000,
+          stdio: 'pipe'
+        }, (err, stdout, stderr) => {
+          if (err || stderr) {
+            reject(new Error(`TypeScript check failed for ${filePath}: ${stderr?.trim() || err.message}`));
+          } else {
+            resolve();
+          }
+        });
+      });
+    }
+  } catch (e) {
+    // If child_process import fails or execFile throws, skip compile check
+    console.warn(`[Compile Check] Skipped for ${filePath}: ${e.message}`);
+  }
+}
+
+/**
+ * Safe write and commit pipeline - the core of Release Guard
+ * This function ensures all file modifications go through a consistent safety pipeline:
+ *   1. Diff Size Check (reject if > MAX_DIFF_LINES changed)
+ *   2. Backup current file
+ *   3. Write new content
+ *   4. Compile/Syntax check (for JS/TS files)
+ *   5. Auto rollback on failure
+ * 
+ * @param {string} filePath - Path to the file to write
+ * @param {string} newContent - New file content
+ * @param {number} expectedDiffSize - Expected number of changed lines for validation
+ * @returns {Promise<string>} Success message with backup path info
+ */
+async function safeWriteAndCommit(filePath, newContent, expectedDiffSize) {
+  const oldContent = fs.readFileSync(filePath, 'utf8');
+  
+  // Step 1: Diff Size Check
+  const actualDiffLines = calculateDiffLines(oldContent, newContent);
+  if (actualDiffLines > MAX_DIFF_LINES) {
+    throw new Error(
+      `❌ 修改行数超过 ${MAX_DIFF_LINES} 行安全限制，事务中止。请拆分步骤。\n` +
+      `实际变更: ${actualDiffLines} 行 | 预期变更: ${expectedDiffSize || '未知'} 行`
+    );
+  }
+  
+  // Step 2: Backup before writing
+  const backupPath = backupFileBeforePatch(filePath);
+  
+  // Step 3: Write new content
+  fs.writeFileSync(filePath, newContent, 'utf8');
+  
+  // Step 4: Compile/Syntax check (for JS/TS files)
+  try {
+    await runCompileCheck(filePath);
+  } catch (e) {
+    // Step 5: Auto rollback on failure
+    if (backupPath && fs.existsSync(backupPath)) {
+      fs.copyFileSync(backupPath, filePath);
+      console.error(`[Auto Rollback] Restored ${filePath} from backup: ${backupPath}`);
+    }
+    throw new Error(`❌ 语法检查失败，已自动回滚。错误信息: ${e.message}`);
+  }
+  
+  return `✅ 修改成功且通过编译检查。(备份: ${backupPath || '无'})`;
+}
+
 /**
  * Handle file_rollback tool - restore file from backup
  * Supports two modes:
@@ -200,7 +340,7 @@ export const fileTools = [
   },
   {
     name: "edit_apply",
-    description: "对 edit_begin 创建的 buffer 应用修改。\n支持两种方式：\n1. replacements 数组：按行号替换内容\n2. instruction 字符串：自然语言指令（如 'replace old_text with new_text'）",
+    description: "对 edit_begin 创建的 buffer 应用修改。\n支持两种方式：\n1. replacements 数组：按行号替换内容",
     inputSchema: {
       type: "object",
       properties: {
@@ -216,10 +356,6 @@ export const fileTools = [
             required: ["line", "new_content"]
           }
         },
-        instruction: { 
-          type: "string", 
-          description: "自然语言指令，例如 'replace old_text with new_text'" 
-        }
       },
       required: ["buffer_id"]
     }
@@ -484,7 +620,10 @@ export async function handleFileTools(name, args, convId) {
                 const oldContent = lines[lineIndex];
                 lines[lineIndex] = args.content || "";
                 
-                fs.writeFileSync(filePath, lines.join('\n'), 'utf8');
+                const newContent = lines.join("\n");
+                try {
+                  await safeWriteAndCommit(filePath, newContent, 1);
+                } catch (e) { return e.message; }
                 return `✅ 已替换第 ${args.line} 行: ${filePath}\n` +
                        `旧内容: "${oldContent.slice(0, 50)}"${oldContent.length > 50 ? "..." : ""}\n` +
                        `新内容: "${lines[lineIndex].slice(0, 50)}"${lines[lineIndex].length > 50 ? "..." : ""}`;
@@ -498,7 +637,10 @@ export async function handleFileTools(name, args, convId) {
                 }
                 
                 lines.splice(lineIndex, 0, args.content || "");
-                fs.writeFileSync(filePath, lines.join('\n'), 'utf8');
+                const newContent = lines.join('\n');
+                try {
+                  await safeWriteAndCommit(filePath, newContent, 1);
+                } catch (e) { return e.message; }
                 return `✅ 已在第 ${args.line} 行插入内容: ${filePath}\n` +
                        `插入内容: "${(args.content || "").slice(0, 50)}"${(args.content || "").length > 50 ? "..." : ""}`;
               }
@@ -513,7 +655,10 @@ export async function handleFileTools(name, args, convId) {
                 }
                 
                 const deletedContent = lines.splice(startLine, deleteCount);
-                fs.writeFileSync(filePath, lines.join('\n'), 'utf8');
+                const newContent = lines.join('\n');
+                try {
+                  await safeWriteAndCommit(filePath, newContent, deleteCount + 1);
+                } catch (e) { return e.message; }
                 return `✅ 已删除第 ${args.line}-${args.line + deleteCount - 1} 行（共 ${deleteCount} 行）: ${filePath}\n` +
                        `删除内容: ${deletedContent.map((c, i) => `  第${args.line + i}行: "${c.slice(0, 40)}"${c.length > 40 ? "..." : ""}"`).join('\n')}`;
               }
@@ -528,7 +673,10 @@ export async function handleFileTools(name, args, convId) {
                 }
                 
                 const deletedContent = lines.splice(startLine, replaceCount, ...(Array.isArray(args.content) ? args.content : [args.content || ""]));
-                fs.writeFileSync(filePath, lines.join('\n'), 'utf8');
+                const newContent = lines.join('\n');
+                try {
+                  await safeWriteAndCommit(filePath, newContent, replaceCount + 1);
+                } catch (e) { return e.message; }
                 return `✅ 已替换第 ${args.line}-${args.line + replaceCount - 1} 行（共 ${replaceCount} 行）: ${filePath}\n` +
                        `删除内容: ${deletedContent.map((c, i) => `  第${args.line + i}行: "${c.slice(0, 40)}"${c.length > 40 ? "..." : ""}"`).join('\n')}\n` +
                        `新内容: ${Array.isArray(args.content) ? args.content.map((c, i) => `  第${args.line + i}行: "${c.slice(0, 40)}"${c.length > 40 ? "..." : ""}"`).join('\n') : `  第${args.line}行: "${(args.content || "").slice(0, 40)}"${(args.content || "").length > 40 ? "..." : ""}`}`;
@@ -572,7 +720,13 @@ export async function handleFileTools(name, args, convId) {
               const finalContent = before + (before && !before.endsWith('\n') ? '\n' : '') + 
                               patchedContext + (after && !after.startsWith('\n') ? '\n' : '') + after;
               
-              fs.writeFileSync(filePath, finalContent, 'utf8');
+              // Calculate expected diff size for context mode
+              const oldContextLines = contextLines.join('\n');
+              const expectedDiff = calculateDiffLines(oldContextLines, patchedContext);
+
+              try {
+                await safeWriteAndCommit(filePath, finalContent, expectedDiff);
+              } catch (e) { return e.message; }
               
               return `✅ Context 模式替换完成: ${filePath}\n` +
                      `目标行: ${targetLine}\n` +
@@ -679,22 +833,6 @@ export async function handleFileTools(name, args, convId) {
             }
           }
           
-          // Apply instruction-based modifications
-          if (args.instruction && args.instruction.trim()) {
-            const instructions = args.instruction.split(';');
-            for (const inst of instructions) {
-              const trimmed = inst.trim();
-              if (trimmed.startsWith('replace ')) {
-                const parts = trimmed.substring(8).split(' with ');
-                if (parts.length === 2) {
-                  const oldText = parts[0].trim();
-                  const newText = parts[1].trim();
-                  buffer.content = buffer.content.replace(oldText, newText);
-                }
-              }
-            }
-          }
-          
           // Update buffer
           buffer.content = lines.join('\n');
           bufferPool.set(bufferId, buffer);
@@ -758,7 +896,22 @@ export async function handleFileTools(name, args, convId) {
           // Backup before commit (new strategy: only backup at commit time)
           const backupPath = backupFileBeforePatch(filePath);
           
-          fs.writeFileSync(filePath, newLines.join('\n'), 'utf8');
+          // Scope Check: ensure modification is within buffer range
+          const bufferContentLines = buffer.content.split('\n');
+          const originalRangeLines = currentLines.slice(buffer.startLine - 1, buffer.endLine);
+          
+          // Calculate expected diff size for the committed content
+          let expectedDiff = 0;
+          for (let j = 0; j < Math.max(originalRangeLines.length, bufferContentLines.length); j++) {
+            if (originalRangeLines[j] !== bufferContentLines[j]) {
+              expectedDiff++;
+            }
+          }
+
+          // Write using safe pipeline
+          try {
+            await safeWriteAndCommit(filePath, newLines.join('\n'), expectedDiff);
+          } catch (e) { return e.message; }
           
           // Update file version tracking for conflict detection
           updateFileVersion(filePath);

@@ -98,6 +98,18 @@ class WorkspaceManager {
   _saveState(state) {
     fs.writeFileSync(STATE_DB, JSON.stringify(state, null, 2), 'utf8');
   }
+
+  // Clear session-specific workspace
+  clearSessionWorkspace(sessionId) {
+    this.ensureStateFile();
+    const state = this._loadState();
+    
+    if (state.sessions && state.sessions[sessionId]) {
+      delete state.sessions[sessionId];
+    }
+    
+    this._saveState(state);
+  }
 }
 
 export const workspaceManager = new WorkspaceManager();

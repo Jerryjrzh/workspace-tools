@@ -1,16 +1,15 @@
 #!/usr/bin/env node
 /**
- * LM Studio Workspace Tools MCP Server v2.0.0
- * - 模块化架构：基于 Gemini 升级方案实现
+ * LM Studio Workspace Tools MCP Server v2.1.0
+ * - 三层架构：Bootstrap/Context Ready/Business Tool
+ * - 分离启动流程：解决 session_start 与 workspace_set 互锁问题
  * - 工作区仅在当前会话内有效，不跨会话持久化
  * - 增强文本操作：patch、append、transform、diff
  * - 新增：find_files、workspace_tree、env_info、port_check、clipboard、json_query
- * v2.0.0 新特性：
- *   - 模块化工具架构，解耦核心逻辑
- *   - 会话级工作区隔离，彻底解决多会话串扰问题
- *   - 中间件安全防护，防止未授权写操作
- *   - 按需加载上下文，减少首次启动开销
- *   - SessionMiddleware：统一的 Session 上下文解析器
+ * v2.1.0 新特性：
+ *   - 三层架构实现（Bootstrap/Context Ready/Business Tool）
+ *   - 启动流程分离（无循环依赖）
+ *   - SessionMiddleware 分层调用
  *   - Single Source of Truth：SessionContext 是唯一可信源
  */
 
@@ -113,9 +112,12 @@ function extractConversationSummaries(ws, maxCount = 5) {
 }
 
 /**
- * Handle tool requests using modular approach
+ * Handle tool requests using modular approach with layered middleware
  * 
- * NEW: Uses SessionMiddleware to resolve context before calling tools
+ * NEW: Uses SessionMiddleware dispatch with 3-layer architecture
+ * - Bootstrap Phase: workspace_set, session_start, workspace_info
+ * - Context Ready Phase: SessionContext已就绪
+ * - Business Phase: file_read, file_patch, shell_run, etc.
  * 
  * Session ID Flow:
  * LM Studio → conversation_id → SessionMiddleware → Context → Tool
@@ -124,27 +126,19 @@ async function handleTool(name, args, extra = {}) {
   // Extract conversation ID from extra parameter
   const convId = extra?.conversation_id || "default";
   
-  // Check if we have a handler for this tool
-  if (toolHandlers[name]) {
-    // NEW: Use SessionMiddleware to resolve context
-    const context = await SessionMiddleware.resolveContext(name, args, convId);
-    
-    // NEW: Inject context into args before calling tool
-    const toolArgs = {
-      ...args,
-      sessionId: context.sessionId,
-      workspace: context.workspace
-    };
-    
-    return await toolHandlers[name](name, toolArgs, context);
+  // Use SessionMiddleware dispatch to handle layered architecture
+  const result = await SessionMiddleware.dispatch(name, args, convId);
+  
+  // If result contains context and toolArgs, we need to call the tool handler
+  if (result && result.context && result.toolArgs) {
+    // Get tool handler
+    if (toolHandlers[name]) {
+      return await toolHandlers[name](name, result.toolArgs, result.context);
+    }
   }
   
-  // Handle tools that are still implemented in server.js for backward compatibility
-  switch (name) {
-    // These should ideally be handled by toolHandlers, but keeping as fallback
-    default:
-      throw new Error(`未知工具: ${name}`);
-  }
+  // For bootstrap tools, return the result directly
+  return result;
 }
 
 // Helper function to get workspace (backward compatibility)
@@ -180,6 +174,7 @@ const transport = new StdioServerTransport();
 await server.connect(transport);
 
 // Log that server has started
-console.error(`🚀 LM Studio Workspace Tools MCP Server v2.0.0 已启动`);
-console.error(`📁 工作区隔离架构已启用，彻底解决多会话串扰问题`);
-console.error(`🔄 SessionMiddleware 已启用，Session ID 贯穿全程`);
+console.error(`🚀 LM Studio Workspace Tools MCP Server v2.1.0 已启动`);
+console.error(`📁 三层架构已启用（Bootstrap/Context Ready/Business Tool）`);
+console.error(`🔄 分层调用已启用，解决 session_start/workspace_set 互锁问题`);
+console.error(`✅ SessionMiddleware 已实现单向状态流`);

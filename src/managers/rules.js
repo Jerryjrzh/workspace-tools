@@ -32,6 +32,20 @@ class RuleManager {
     }
     return '';
   }
+
+  /**
+   * Load global rules and return as structured data
+   */
+  async loadGlobalRules() {
+    const content = this.loadGlobal();
+    return [
+      {
+        name: 'global_rules',
+        path: this.globalRulePath,
+        content: content
+      }
+    ];
+  }
 }
 
 export const ruleManager = new RuleManager();

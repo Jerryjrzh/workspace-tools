@@ -5,6 +5,8 @@ import os from 'os';
 import { workspaceManager } from './workspace.js';
 import { conversationManager } from './conversation.js';
 import { ruleManager } from './rules.js';
+import { sessionContextManager } from './sessionContext.js';
+import { SessionResolver } from './sessionResolver.js';
 
 /**
  * Load workspace log file (local helper, also defined in server.js)
@@ -19,127 +21,101 @@ function loadWorkspaceLog(ws) {
   return { sessions: [] };
 }
 
+/**
+ * Get workspace with fallback chain
+ * Priority:
+ * 1. Extracted from conversation (Tool call)
+ * 2. Current global default from workspaceManager
+ * 3. Last path from workspace log
+ * 4. null
+ */
+async function getWorkspaceFallback() {
+  // Fallback 1: Current global default
+  const currentGlobal = workspaceManager.getWorkspace?.();
+  if (currentGlobal) return currentGlobal;
+
+  // Fallback 2: Last path from workspace log
+  try {
+    const logPath = path.join(process.cwd(), '.lmstudio-workspace.json');
+    if (fs.existsSync(logPath)) {
+      const log = JSON.parse(fs.readFileSync(logPath, 'utf8'));
+      const lastSession = log.sessions?.slice(-1)[0];
+      if (lastSession?.path) return lastSession.path;
+    }
+  } catch (e) {
+    // Continue to next fallback
+  }
+
+  return null;
+}
+
 export async function handleSessionStart(args, passedConvId) {
   const mode = args.mode || 'fast'; // Implement fast/deep split mode
-  const sessionId = passedConvId || 'default';
+
+  // 1. Resolve session ID using SessionResolver (no more 'default'污染)
+  const sessionId = await SessionResolver.resolve(passedConvId);
+
+  // 2. Get or create unified context
+  const context = sessionContextManager.getOrCreateContext(sessionId);
+
+  // 3. Load conversation data
+  let convData = { messages: [] };
   try {
-    
-    const convData = { messages: [] };
-    try {
-      if (sessionId !== 'default') {
-        // 如果有明确的 ID，读对应的会话文件
-        convData = await conversationManager.loadConversation(sessionId);
-      } else {
-        // 如果是 default，尝试找最新的文件来分析 (仅用于提取上下文，不影响状态绑定的 ID)
-        const latestConv = await conversationManager.getLatestConversation();
-        const targetConvFile = latestConv.name;
-        convData = await conversationManager.loadConversation(targetConvFile.replace('.conversation.json', ''));
+    convData = await conversationManager.loadConversation(sessionId);
+  } catch (e) {
+    console.warn(`[Session ${sessionId}] 会话加载失败，按空会话处理`);
+  }
+
+  // 4. Delegate parsing to appropriate managers
+  const inferredWorkspace = conversationManager.extractWorkspace(convData) || await getWorkspaceFallback();
+  const detectedTask = conversationManager.detectTaskType(convData);
+
+  // 5. Update unified context
+  context.workspace = inferredWorkspace;
+  context.task = detectedTask;
+  context.initialized = true;
+
+  // 6. Bind workspace and init status
+  if (context.workspace) {
+    workspaceManager.setSessionWorkspace(sessionId, context.workspace);
+  }
+  workspaceManager.setSessionInitStatus(sessionId, true, context.task);
+
+  // 7. Return standardized state
+  const currentWs = context.workspace || "⚠️ 未设置";
+  
+  try {
+    const wsLog = loadWorkspaceLog(currentWs);
+    const lastWsSession = wsLog.sessions?.slice(-1)[0];
+
+    return {
+      status: "READY",
+      workspace: currentWs,
+      session_id: sessionId,
+      active_task: context.task || "none",
+      details: {
+        message: "环境已就绪，可以开始执行工具调用。",
+        mode: mode,
+        last_archived_session: lastWsSession ? {
+          date: lastWsSession.date,
+          summary: lastWsSession.summary,
+          context: lastWsSession.context
+        } : null,
+        conversation_snippet: conversationManager.extractConversationSummary(convData).userMessages.slice(0, 3),
+        global_rules_loaded: true
       }
-    } catch (e) {
-      console.warn('无法加载历史会话，跳过上下文推断:', e.message);
-    }
-    
-    // 2. Deeply parse session text to lock its originally embedded workspace
-    let inferredWorkspace = null;
-    const convText = JSON.stringify(convData.messages || []);
-    
-    // Precise extraction of user's last declared absolute path or historical feature
-    const wsMatch = convText.match(/(?:"text"\s*:\s*"当前workspace是\s*|workspace_set"\s*,\s*"parameters"\s*:\s*{\s*"path"\s*:*\s*)([^\s"'}]+)/i);
-    if (wsMatch && wsMatch[1]) {
-      inferredWorkspace = wsMatch[1];
-    }
-
-    if (inferredWorkspace) {
-      // 3. Generate irreversible forced binding, eliminate memory overwrite risk
-      workspaceManager.setSessionWorkspace(convId, inferredWorkspace);
-    }
-
-    const currentWs = workspaceManager.getWorkspaceForSession(convId);
-    
-    // Extract conversation summary
-    const convSummary = conversationManager.extractConversationSummary(convData);
-
-    // Deep mode: perform original server.js deep text extraction and log retrieval
-    try {
-      const wsLog = loadWorkspaceLog(currentWs);
-      const lastWsSession = wsLog.sessions?.slice(-1)[0];
-
-      // Detect task type based on conversation content
-      let detectedTask = null;
-      
-      try {
-        const rulesDir = path.join(os.homedir(), '.lmstudio', 'tasks');
-        if (fs.existsSync(rulesDir)) {
-          const convTextLower = convData.messages 
-            ? convData.messages.map(m => m.content || '').join(' ').toLowerCase()
-            : '';
-          
-          // Define task detection patterns
-          const taskPatterns = {
-            coding: [
-              /编码|coding|实现|implement|开发|develop|函数|function|类|class|变量|variable/i,
-              /修复|fix|bug|错误|error|优化|optimize|重构|refactor/i
-            ],
-            debug: [
-              /调试|debug|故障|troubleshoot|问题|problem|异常|exception|崩溃|crash/i,
-              /日志|log|trace|监控|monitor|性能|performance/i
-            ],
-            review: [
-              /审查|review|检查|check|审计|audit|评估|evaluate|质量|quality/i,
-              /安全|security|最佳实践|best practice|标准|standard|规范|specification/i
-            ]
-          };
-          
-          // Detect task type
-          for (const [taskName, patterns] of Object.entries(taskPatterns)) {
-            for (const pattern of patterns) {
-              if (pattern.test(convTextLower)) {
-                detectedTask = taskName;
-                break;
-              }
-            }
-            if (detectedTask) break;
-          }
-        }
-      } catch (e) {
-        console.warn('Task rules detection failed:', e.message);
-      }
-      
-      workspaceManager.setSessionInitStatus(convId, true, detectedTask);
-
-      // Return standardized JSON Machine State with additional details
-      return {
-        status: "READY",
-        workspace: currentWs || "⚠️ 未设置",
-        session_id: convId,
-        active_task: detectedTask || "none",
-        details: {
-          message: "环境已就绪，可以开始执行工具调用。",
-          mode: mode,
-          last_archived_session: lastWsSession ? {
-            date: lastWsSession.date,
-            summary: lastWsSession.summary,
-            context: lastWsSession.context
-          } : null,
-          conversation_snippet: convSummary.userMessages.slice(0, 3),
-          global_rules_loaded: true
-        }
-      };
-    } catch (error) {
-      // Fallback to basic JSON state if deep mode fails
-      return {
-        status: "READY",
-        workspace: currentWs || "⚠️ 未设置",
-        session_id: convId,
-        active_task: "none",
-        details: {
-          message: "环境已就绪，可以开始执行工具调用。",
-          mode: mode,
-          error: error.message
-        }
-      };
-    }
+    };
   } catch (error) {
-    throw new Error(`Session start failed: ${error.message}`);
+    return {
+      status: "READY",
+      workspace: currentWs,
+      session_id: sessionId,
+      active_task: context.task || "none",
+      details: {
+        message: "环境已就绪，可以开始执行工具调用。",
+        mode: mode,
+        error: error.message
+      }
+    };
   }
 }

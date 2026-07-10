@@ -245,7 +245,7 @@ export class SessionMiddleware {
     }
     
     // Load conversation data
-    const { conversationManager } = await import('./conversation.js');
+    const { conversationManager } = await import('../managers/conversation.js');
     let convData = { messages: [] };
     try {
       convData = await conversationManager.loadConversation(sessionId);

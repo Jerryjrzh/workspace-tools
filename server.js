@@ -10,6 +10,8 @@
  *   - 会话级工作区隔离，彻底解决多会话串扰问题
  *   - 中间件安全防护，防止未授权写操作
  *   - 按需加载上下文，减少首次启动开销
+ *   - SessionMiddleware：统一的 Session 上下文解析器
+ *   - Single Source of Truth：SessionContext 是唯一可信源
  */
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -18,6 +20,7 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprot
 import { workspaceManager } from "./src/managers/workspace.js";
 import { handleSessionStart } from "./src/managers/session.js";
 import { ruleManager } from "./src/managers/rules.js";
+import { SessionMiddleware } from "./src/middleware/sessionMiddleware.js";
 import { ALL_TOOLS, toolHandlers } from "./src/tools/index.js";
 
 // Import additional tools that are still in server.js for now
@@ -111,6 +114,11 @@ function extractConversationSummaries(ws, maxCount = 5) {
 
 /**
  * Handle tool requests using modular approach
+ * 
+ * NEW: Uses SessionMiddleware to resolve context before calling tools
+ * 
+ * Session ID Flow:
+ * LM Studio → conversation_id → SessionMiddleware → Context → Tool
  */
 async function handleTool(name, args, extra = {}) {
   // Extract conversation ID from extra parameter
@@ -118,16 +126,26 @@ async function handleTool(name, args, extra = {}) {
   
   // Check if we have a handler for this tool
   if (toolHandlers[name]) {
-    return await toolHandlers[name](name, args, convId);
+    // NEW: Use SessionMiddleware to resolve context
+    const context = await SessionMiddleware.resolveContext(name, args, convId);
+    
+    // NEW: Inject context into args before calling tool
+    const toolArgs = {
+      ...args,
+      sessionId: context.sessionId,
+      workspace: context.workspace
+    };
+    
+    return await toolHandlers[name](name, toolArgs, context);
   }
   
-  // Handle tools that are still implemented in server.js for backward compatibility
   // Handle tools that are still implemented in server.js for backward compatibility
   switch (name) {
     // These should ideally be handled by toolHandlers, but keeping as fallback
     default:
       throw new Error(`未知工具: ${name}`);
-  }}
+  }
+}
 
 // Helper function to get workspace (backward compatibility)
 function getWorkspace() {
@@ -164,3 +182,4 @@ await server.connect(transport);
 // Log that server has started
 console.error(`🚀 LM Studio Workspace Tools MCP Server v2.0.0 已启动`);
 console.error(`📁 工作区隔离架构已启用，彻底解决多会话串扰问题`);
+console.error(`🔄 SessionMiddleware 已启用，Session ID 贯穿全程`);

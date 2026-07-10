@@ -2,11 +2,10 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { workspaceManager } from './workspace.js';
 import { conversationManager } from './conversation.js';
-import { ruleManager } from './rules.js';
 import { sessionContextManager } from './sessionContext.js';
 import { SessionResolver } from './sessionResolver.js';
+import { SessionMiddleware } from '../middleware/sessionMiddleware.js';
 
 /**
  * Load workspace log file (local helper, also defined in server.js)
@@ -19,34 +18,6 @@ function loadWorkspaceLog(ws) {
     }
   } catch (e) {}
   return { sessions: [] };
-}
-
-/**
- * Get workspace with fallback chain
- * Priority:
- * 1. Extracted from conversation (Tool call)
- * 2. Current global default from workspaceManager
- * 3. Last path from workspace log
- * 4. null
- */
-async function getWorkspaceFallback() {
-  // Fallback 1: Current global default
-  const currentGlobal = workspaceManager.getWorkspace?.();
-  if (currentGlobal) return currentGlobal;
-
-  // Fallback 2: Last path from workspace log
-  try {
-    const logPath = path.join(process.cwd(), '.lmstudio-workspace.json');
-    if (fs.existsSync(logPath)) {
-      const log = JSON.parse(fs.readFileSync(logPath, 'utf8'));
-      const lastSession = log.sessions?.slice(-1)[0];
-      if (lastSession?.path) return lastSession.path;
-    }
-  } catch (e) {
-    // Continue to next fallback
-  }
-
-  return null;
 }
 
 export async function handleSessionStart(args, passedConvId) {
@@ -67,19 +38,22 @@ export async function handleSessionStart(args, passedConvId) {
   }
 
   // 4. Delegate parsing to appropriate managers
-  const inferredWorkspace = conversationManager.extractWorkspace(convData) || await getWorkspaceFallback();
+  const inferredWorkspace = context.workspace || null; // Workspace is set by middleware or session_start
   const detectedTask = conversationManager.detectTaskType(convData);
 
   // 5. Update unified context
-  context.workspace = inferredWorkspace;
+  if (args.path) {
+    context.workspace = args.path;
+  }
   context.task = detectedTask;
   context.initialized = true;
 
-  // 6. Bind workspace and init status
-  if (context.workspace) {
-    workspaceManager.setSessionWorkspace(sessionId, context.workspace);
-  }
-  workspaceManager.setSessionInitStatus(sessionId, true, context.task);
+  // 6. Persist context
+  await SessionMiddleware.updateContext(sessionId, {
+    workspace: context.workspace,
+    task: context.task,
+    initialized: context.initialized
+  });
 
   // 7. Return standardized state
   const currentWs = context.workspace || "⚠️ 未设置";

@@ -1,6 +1,4 @@
 // src/tools/shell.js
-import { workspaceManager } from '../managers/workspace.js';
-import { ToolMiddleware } from '../utils/middleware.js';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 
@@ -63,51 +61,46 @@ export const shellTools = [
   }
 ];
 
-export async function handleShellTools(name, args, convId) {
-  // Use middleware for security and context
-  return await ToolMiddleware.executeWithMiddleware(
-    async (toolName, toolArgs, context) => {
-      const ws = context.workspace;
-      
-      switch (toolName) {
-        case "shell_run": {
-          const { stdout, stderr } = await execAsync(args.command, {
-            cwd: args.cwd || ws,
-            timeoutSeconds: args.timeout_seconds || 300
-          });
-          return { stdout: stdout.trim(), stderr: stderr.trim() };
-        }
-        
-        case "process_start": {
-          // In a real implementation, we'd track background processes
-          // For now, we'll just execute and return a mock PID
-          const { pid } = await execAsync(`${args.command} & echo $!`, {
-            cwd: args.cwd || ws
-          });
-          return `✅ 后台进程已启动，PID: ${pid.trim()}`;
-        }
-        
-        case "process_output": {
-          // Mock implementation - in reality this would read from stored process logs
-          return `📄 进程 ${args.pid} 的最新输出:\n（这是一个模拟实现，实际应从后台进程日志读取）`;
-        }
-        
-        case "process_kill": {
-          // Mock implementation
-          return `✅ 已终止进程: ${args.pid}`;
-        }
-        
-        case "process_list_bg": {
-          // Mock implementation
-          return `📋 后台进程列表:\n（这是一个模拟实现，实际应显示真实的后台进程）`;
-        }
-        
-        default:
-          throw new Error(`未知 shell 工具: ${name}`);
-      }
-    },
-    name,
-    args,
-    { conversation_id: convId }
-  );
+export async function handleShellTools(name, args, context) {
+  // Extract workspace from context (Single Source of Truth)
+  const ws = context?.workspace || process.cwd();
+  
+  switch (name) {
+    case "shell_run": {
+      const cwd = args.cwd || ws;
+      const { stdout, stderr } = await execAsync(args.command, {
+        cwd: cwd,
+        timeoutSeconds: args.timeout_seconds || 300
+      });
+      return { stdout: stdout.trim(), stderr: stderr.trim() };
+    }
+    
+    case "process_start": {
+      const cwd = args.cwd || ws;
+      // In a real implementation, we'd track background processes
+      // For now, we'll just execute and return a mock PID
+      const { pid } = await execAsync(`${args.command} & echo $!`, {
+        cwd: cwd
+      });
+      return `✅ 后台进程已启动，PID: ${pid.trim()}`;
+    }
+    
+    case "process_output": {
+      // Mock implementation - in reality this would read from stored process logs
+      return `📄 进程 ${args.pid} 的最新输出:\n（这是一个模拟实现，实际应从后台进程日志读取）`;
+    }
+    
+    case "process_kill": {
+      // Mock implementation
+      return `✅ 已终止进程: ${args.pid}`;
+    }
+    
+    case "process_list_bg": {
+      // Mock implementation
+      return `📋 后台进程列表:\n（这是一个模拟实现，实际应显示真实的后台进程）`;
+    }
+    
+    default:
+      throw new Error(`未知 shell 工具: ${name}`);
+  }
 }

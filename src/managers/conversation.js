@@ -19,18 +19,6 @@ class ConversationManager {
     return JSON.parse(content);
   }
 
-  // Extract workspace from conversation text
-  extractWorkspaceFromConversation(convData) {
-    const convText = JSON.stringify(convData.messages || []);
-    
-    // Precise extraction of user's last declared absolute path or historical feature
-    const wsMatch = convText.match(/(?:"text"\s*:\s*"当前workspace是\s*|workspace_set"\s*,\s*"parameters"\s*:\s*{\s*"path"\s*:*\s*)([^\s"'}]+)/i);
-    if (wsMatch && wsMatch[1]) {
-      return wsMatch[1];
-    }
-    return null;
-  }
-
   // Get latest conversation file
   async getLatestConversation() {
     if (!fs.existsSync(this.convDir)) {
@@ -63,14 +51,6 @@ class ConversationManager {
       messageCount: messages.length,
       userMessages: userMessages.filter(Boolean)
     };
-  }
-
-  /**
-   * Extract workspace from conversation data by parsing tool calls
-   * This is more reliable than regex-based extraction
-   */
-  extractWorkspace(convData) {
-    return this.extractWorkspaceFromConversation(convData);
   }
 
   /**

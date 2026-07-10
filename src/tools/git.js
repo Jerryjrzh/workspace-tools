@@ -1,6 +1,4 @@
 // src/tools/git.js
-import { workspaceManager } from '../managers/workspace.js';
-import { ToolMiddleware } from '../utils/middleware.js';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 
@@ -90,113 +88,106 @@ export const gitTools = [
   }
 ];
 
-export async function handleGitTools(name, args, convId) {
-  // Use middleware for security and context
-  return await ToolMiddleware.executeWithMiddleware(
-    async (toolName, toolArgs, context) => {
-      const ws = context.workspace;
+export async function handleGitTools(name, args, context) {
+  // Extract workspace from context (Single Source of Truth)
+  const ws = context?.workspace || process.cwd();
+  
+  switch (name) {
+    case "git_status": {
+      const { stdout } = await execAsync('git status', { cwd: ws });
+      return stdout;
+    }
+    
+    case "git_diff": {
+      let cmd = 'git diff';
+      if (args.staged) cmd += ' --staged';
+      if (args.file) cmd += ` -- ${args.file}`;
+      const { stdout } = await execAsync(cmd, { cwd: ws });
+      return stdout;
+    }
+    
+    case "git_commit": {
+      // Add files first
+      const filesArg = args.files && args.files.length > 0 ? args.files.join(' ') : '.';
+      await execAsync(`git add ${filesArg}`, { cwd: ws });
       
-      switch (toolName) {
-        case "git_status": {
-          const { stdout } = await execAsync('git status', { cwd: ws });
-          return stdout;
-        }
-        
-        case "git_diff": {
-          let cmd = 'git diff';
-          if (args.staged) cmd += ' --staged';
-          if (args.file) cmd += ` -- ${args.file}`;
-          const { stdout } = await execAsync(cmd, { cwd: ws });
-          return stdout;
-        }
-        
-        case "git_commit": {
-          // Add files first
-          const filesArg = args.files && args.files.length > 0 ? args.files.join(' ') : '.';
-          await execAsync(`git add ${filesArg}`, { cwd: ws });
-          
-          let commitMessage = args.message;
-          if (args.auto_message || !commitMessage) {
-            // In a real implementation, this would call lm_chat to generate a message
-            commitMessage = args.message || `feat: automated commit via MCP Server`;
-          }
-          
-          const { stdout } = await execAsync(`git commit -m "${commitMessage}"`, { cwd: ws });
-          return stdout;
-        }
-        
-        case "git_branch": {
-          let cmd = 'git branch';
-          switch (args.action) {
-            case "list":
-              cmd += ' -a';
-              break;
-            case "create":
-              if (!args.name) throw new Error("分支名是必填的");
-              cmd += ` ${args.name}`;
-              if (args.base) cmd += ` ${args.base}`;
-              break;
-            case "checkout":
-              if (!args.name) throw new Error("分支名是必填的");
-              cmd += ` ${args.name}`;
-              break;
-            case "delete":
-              if (!args.name) throw new Error("分支名是必填的");
-              cmd += ` -d ${args.name}`;
-              break;
-            case "current":
-              cmd += ' --show-current';
-              break;
-          }
-          const { stdout } = await execAsync(cmd, { cwd: ws });
-          return stdout;
-        }
-        
-        case "git_stash": {
-          let cmd = 'git stash';
-          switch (args.action) {
-            case "push":
-              cmd += ' push';
-              if (args.message) cmd += ` -m "${args.message}"`;
-              break;
-            case "pop":
-              cmd += ' pop';
-              if (args.index !== undefined) cmd += ` ${args.index}`;
-              break;
-            case "list":
-              cmd += ' list';
-              break;
-            case "drop":
-              cmd += ' drop';
-              if (args.index !== undefined) cmd += ` ${args.index}`;
-              break;
-            case "show":
-              cmd += ' show';
-              if (args.index !== undefined) cmd += ` ${args.index}`;
-              else cmd += ' --include-untrusted';
-              break;
-          }
-          const { stdout } = await execAsync(cmd, { cwd: ws });
-          return stdout;
-        }
-        
-        case "git_log": {
-          let cmd = 'git log';
-          if (args.limit) cmd += ` -${args.limit}`;
-          if (args.author) cmd += ` --author="${args.author}"`;
-          if (args.since) cmd += ` --since="${args.since}"`;
-          if (args.file) cmd += ` -- ${args.file}`;
-          if (args.oneline) cmd += ' --oneline';
-          const { stdout } = await execAsync(cmd, { cwd: ws });
-          return stdout;
-        }
-        
-        default:
-          throw new Error(`未知 git 工具: ${name}`);
+      let commitMessage = args.message;
+      if (args.auto_message || !commitMessage) {
+        // In a real implementation, this would call lm_chat to generate a message
+        commitMessage = args.message || `feat: automated commit via MCP Server`;
       }
-    },
-    name,
-    args,
-    { conversation_id: convId }
-  );
+      
+      const { stdout } = await execAsync(`git commit -m "${commitMessage}"`, { cwd: ws });
+      return stdout;
+    }
+    
+    case "git_branch": {
+      let cmd = 'git branch';
+      switch (args.action) {
+        case "list":
+          cmd += ' -a';
+          break;
+        case "create":
+          if (!args.name) throw new Error("分支名是必填的");
+          cmd += ` ${args.name}`;
+          if (args.base) cmd += ` ${args.base}`;
+          break;
+        case "checkout":
+          if (!args.name) throw new Error("分支名是必填的");
+          cmd += ` ${args.name}`;
+          break;
+        case "delete":
+          if (!args.name) throw new Error("分支名是必填的");
+          cmd += ` -d ${args.name}`;
+          break;
+        case "current":
+          cmd += ' --show-current';
+          break;
+      }
+      const { stdout } = await execAsync(cmd, { cwd: ws });
+      return stdout;
+    }
+    
+    case "git_stash": {
+      let cmd = 'git stash';
+      switch (args.action) {
+        case "push":
+          cmd += ' push';
+          if (args.message) cmd += ` -m "${args.message}"`;
+          break;
+        case "pop":
+          cmd += ' pop';
+          if (args.index !== undefined) cmd += ` ${args.index}`;
+          break;
+        case "list":
+          cmd += ' list';
+          break;
+        case "drop":
+          cmd += ' drop';
+          if (args.index !== undefined) cmd += ` ${args.index}`;
+          break;
+        case "show":
+          cmd += ' show';
+          if (args.index !== undefined) cmd += ` ${args.index}`;
+          else cmd += ' --include-untrusted';
+          break;
+      }
+      const { stdout } = await execAsync(cmd, { cwd: ws });
+      return stdout;
+    }
+    
+    case "git_log": {
+      let cmd = 'git log';
+      if (args.limit) cmd += ` -${args.limit}`;
+      if (args.author) cmd += ` --author="${args.author}"`;
+      if (args.since) cmd += ` --since="${args.since}"`;
+      if (args.file) cmd += ` -- ${args.file}`;
+      if (args.oneline) cmd += ' --oneline';
+      const { stdout } = await execAsync(cmd, { cwd: ws });
+      return stdout;
+    }
+    
+    default:
+      throw new Error(`未知 git 工具: ${name}`);
+  }
 }

@@ -14,13 +14,14 @@ let nextBufferId = 1;
 /**
  * Create a backup of a file before modification
  * @param {string} filePath - Path to the file to backup
+ * @param {Object} context - Session context containing workspace
  * @returns {string|null} - Path to the backup file, or null if no backup needed
  */
-function backupFileBeforePatch(filePath) {
+function backupFileBeforePatch(filePath, context) {
   try {
     if (!fs.existsSync(filePath)) return null; // No backup needed for new files
     
-    const ws = workspaceManager.getWorkspaceForSession('default') || process.cwd();
+    const ws = context.workspace || workspaceManager.getWorkspace() || process.cwd();
     const backupDirPath = path.join(ws, BACKUP_DIR);
     
     if (!fs.existsSync(backupDirPath)) {
@@ -501,7 +502,7 @@ function getFileVersion(filePath) {
   return fileVersions.get(filePath);
 }
 
-export async function handleFileTools(name, args, convId) {
+export async function handleFileTools(name, args, context) {
   // Use middleware for security and context
   return await ToolMiddleware.executeWithMiddleware(
     async (toolName, toolArgs, context) => {
@@ -892,7 +893,7 @@ export async function handleFileTools(name, args, convId) {
     },
     name,
     args,
-    { conversation_id: convId }
+    { conversation_id: context }
   );
 }
 

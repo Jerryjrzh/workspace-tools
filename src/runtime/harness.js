@@ -1,6 +1,7 @@
 // src/runtime/harness.js - Simple test framework for Runtime
 import { AgentRuntime } from './AgentRuntime.js';
 import { WorkspaceStage } from './stages/WorkspaceStage.js';
+import { GuardStage } from './stages/GuardStage.js';
 
 /**
  * Run a single test case
@@ -33,6 +34,13 @@ function createToolHarness(toolFn, testCase) {
     // Add WorkspaceStage if test provides workspace
     if (testCase.workspace) {
       runtime.use(WorkspaceStage);
+      if (testCase.stages) {
+        for (const stage of testCase.stages) {
+          runtime.use(stage);
+        }
+      } else {
+        runtime.use(GuardStage);
+      }
       runtime.use((ctx, next) => {
         ctx.state = ctx.state || {};
         return next();
@@ -42,6 +50,7 @@ function createToolHarness(toolFn, testCase) {
     // Add tool as final stage
     runtime.use(async (ctx, next) => {
       ctx.result = await toolFn(ctx, ctx.toolRequest.args);
+      await next();
     });
     
     const initialData = {
@@ -65,7 +74,41 @@ function createToolHarness(toolFn, testCase) {
         throw new Error(`Expected ${JSON.stringify(testCase.expect)}, got ${JSON.stringify(finalCtx.result)}`);
       }
     }
+
+    if (testCase.assertions) {
+      for (const assertion of testCase.assertions) {
+        if (!assertion(finalCtx)) {
+          throw new Error('Assertion failed');
+        }
+      }
+    }
+
+    return finalCtx;
   };
+}
+
+function expectWorkspace(ctx, expectedWorkspace) {
+  return ctx.workspace === expectedWorkspace;
+}
+
+function expectState(ctx, key, value) {
+  return ctx.state?.[key] === value;
+}
+
+function expectBackup(ctx, fileName) {
+  const backups = ctx.state?.guardBackups || [];
+  return backups.some((backup) => backup.includes(fileName));
+}
+
+async function expectThrows(fn, matcher) {
+  try {
+    await fn();
+    throw new Error('Expected function to throw');
+  } catch (error) {
+    if (matcher && !matcher.test(error.message)) {
+      throw error;
+    }
+  }
 }
 
 /**
@@ -93,4 +136,4 @@ async function runSuite(options) {
   return passed === total;
 }
 
-export { runTest, createToolHarness, runSuite };
+export { runTest, createToolHarness, runSuite, expectWorkspace, expectState, expectBackup, expectThrows };

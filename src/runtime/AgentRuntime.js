@@ -58,7 +58,7 @@ class AgentRuntime extends EventEmitter {
 
     await dispatch(0);
     this.emit('runtime:end', ctx);
-    return ctx.result;
+    return ctx;
   }
 }
 
@@ -75,6 +75,8 @@ function createContext(initialData = {}) {
     // 2. Core state (Single Source of Truth)
     workspace: initialData.workspace || null,
     session: {},     // Session state (to be loaded by SessionStage)
+    conversation: null,
+    task: null,
     rules: [],       // Active rules
     skills: [],      // Active skills
     

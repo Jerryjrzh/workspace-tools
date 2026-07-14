@@ -3,6 +3,15 @@ import { AgentRuntime } from './AgentRuntime.js';
 import { WorkspaceStage } from './stages/WorkspaceStage.js';
 import { GuardStage } from './stages/GuardStage.js';
 import { RuntimeContextStage } from './stages/RuntimeContextStage.js';
+import { ConversationStage } from './stages/ConversationStage.js';
+import { TaskStage } from './stages/TaskStage.js';
+import { SummaryStage } from './stages/SummaryStage.js';
+import { SnapshotStage } from './stages/SnapshotStage.js';
+import { SessionPersistStage } from './stages/SessionPersistStage.js';
+import { ProviderRegistry } from './providers/ProviderRegistry.js';
+import { conversationProvider } from './providers/ConversationProvider.js';
+import { workspaceManager } from '../managers/workspace.js';
+import { sessionPersistenceProvider } from './providers/SessionPersistenceProvider.js';
 
 /**
  * Run a single test case
@@ -89,6 +98,49 @@ function createToolHarness(toolFn, testCase) {
   };
 }
 
+async function runRegressionSuite(options = {}) {
+  const runtime = new AgentRuntime();
+  const providerRegistry = new ProviderRegistry({
+    conversation: conversationProvider,
+    workspace: workspaceManager,
+    persistence: sessionPersistenceProvider
+  });
+
+  runtime.use(WorkspaceStage);
+  runtime.use(RuntimeContextStage);
+  runtime.use(ConversationStage);
+  runtime.use(TaskStage);
+  runtime.use(SummaryStage);
+  runtime.use(SnapshotStage);
+  runtime.use(GuardStage);
+  runtime.use(SessionPersistStage);
+  runtime.use(async (ctx, next) => {
+    ctx.state = ctx.state || {};
+    ctx.state.regression = {
+      workspace: ctx.workspace,
+      sessionId: ctx.sessionId,
+      conversationName: ctx.conversation?.name || null,
+      task: ctx.task,
+      guarded: Boolean(ctx.state.guardBackups?.length)
+    };
+    await next();
+  });
+
+  const initialData = {
+    sessionId: options.sessionId || 'regression-session',
+    toolRequest: {
+      name: options.toolName || 'regression_tool',
+      args: options.args || {},
+      conversationId: options.sessionId || 'regression-session'
+    },
+    workspace: options.workspace || null,
+    providerRegistry
+  };
+
+  const ctx = await runtime.execute(initialData);
+  return ctx;
+}
+
 function expectWorkspace(ctx, expectedWorkspace) {
   return ctx.workspace === expectedWorkspace;
 }
@@ -138,4 +190,4 @@ async function runSuite(options) {
   return passed === total;
 }
 
-export { runTest, createToolHarness, runSuite, expectWorkspace, expectState, expectBackup, expectThrows };
+export { runTest, createToolHarness, runSuite, runRegressionSuite, expectWorkspace, expectState, expectBackup, expectThrows };

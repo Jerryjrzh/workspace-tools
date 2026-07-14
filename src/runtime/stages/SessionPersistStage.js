@@ -1,6 +1,4 @@
-import fs from 'fs';
-import path from 'path';
-import os from 'os';
+import { sessionPersistenceProvider } from '../providers/SessionPersistenceProvider.js';
 
 export async function SessionPersistStage(ctx, next) {
   const sessionId = ctx.sessionId || ctx.toolRequest?.conversationId || null;
@@ -8,9 +6,6 @@ export async function SessionPersistStage(ctx, next) {
     return next();
   }
 
-  const sessionDir = path.join(os.homedir(), '.lmstudio', 'sessions');
-  fs.mkdirSync(sessionDir, { recursive: true });
-  const statePath = path.join(sessionDir, `${sessionId}.json`);
   const state = {
     sessionId,
     workspace: ctx.workspace || null,
@@ -22,7 +17,7 @@ export async function SessionPersistStage(ctx, next) {
     updatedAt: new Date().toISOString()
   };
 
-  fs.writeFileSync(statePath, JSON.stringify(state, null, 2), 'utf8');
+  const statePath = sessionPersistenceProvider.saveSessionState(sessionId, state);
 
   ctx.session = ctx.session || {};
   ctx.session.persisted = true;

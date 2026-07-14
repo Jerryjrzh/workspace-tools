@@ -6,9 +6,13 @@ export async function RuntimeContextStage(ctx, next) {
   const sessionId = ctx.sessionId || ctx.toolRequest?.conversationId || null;
   const fallbackWorkspace = ctx.workspace || null;
 
+  const registry = ctx.providerRegistry || null;
+  const conversationProviderInstance = registry?.get?.('conversation') || conversationProvider;
+  const workspaceProviderInstance = registry?.get?.('workspace') || workspaceManager;
+
   const provider = new (await import('../providers/RuntimeContextProvider.js')).RuntimeContextProvider(
-    conversationProvider,
-    workspaceManager
+    conversationProviderInstance,
+    workspaceProviderInstance
   );
 
   const resolved = provider.resolve(sessionId, fallbackWorkspace);

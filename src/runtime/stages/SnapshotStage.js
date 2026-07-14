@@ -1,3 +1,5 @@
+import { sessionPersistenceProvider } from '../providers/SessionPersistenceProvider.js';
+
 export async function SnapshotStage(ctx, next) {
   const conversation = ctx.conversation || { messages: [] };
   const snapshot = {
@@ -8,6 +10,8 @@ export async function SnapshotStage(ctx, next) {
     lastUpdated: new Date().toISOString(),
     preview: (conversation.messages || []).slice(-2)
   };
+
+  sessionPersistenceProvider.saveSnapshot(ctx.sessionId || ctx.toolRequest?.conversationId || 'default', snapshot);
 
   ctx.session = ctx.session || {};
   ctx.session.snapshot = snapshot;

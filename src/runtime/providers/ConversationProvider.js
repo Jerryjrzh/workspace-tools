@@ -1,36 +1,16 @@
-import fs from 'fs';
-import path from 'path';
-import os from 'os';
+import { sessionPersistenceProvider } from './SessionPersistenceProvider.js';
 
 class ConversationProvider {
-  constructor(baseDir = null) {
-    this.baseDir = baseDir;
-  }
-
-  getBaseDir() {
-    return this.baseDir || path.join(os.homedir(), '.lmstudio', 'conversations');
-  }
-
-  ensureDirectory() {
-    const baseDir = this.getBaseDir();
-    fs.mkdirSync(baseDir, { recursive: true });
-    return baseDir;
+  constructor(provider = sessionPersistenceProvider) {
+    this.provider = provider;
   }
 
   load(sessionId) {
-    const baseDir = this.ensureDirectory();
-    const filePath = path.join(baseDir, `${sessionId}.conversation.json`);
-    if (!fs.existsSync(filePath)) {
-      return null;
-    }
-    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    return this.provider.loadConversation(sessionId);
   }
 
   list() {
-    const baseDir = this.ensureDirectory();
-    return fs.readdirSync(baseDir)
-      .filter((file) => file.endsWith('.conversation.json'))
-      .map((file) => file.replace('.conversation.json', ''));
+    return [];
   }
 }
 

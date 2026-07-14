@@ -8,6 +8,8 @@ import { SummaryStage } from './stages/SummaryStage.js';
 import { SnapshotStage } from './stages/SnapshotStage.js';
 import { SessionPersistStage } from './stages/SessionPersistStage.js';
 import { SessionStage } from './stages/SessionStage.js';
+import { ConversationLoadStage } from './stages/ConversationLoadStage.js';
+import { SessionLifecycleStage } from './stages/SessionLifecycleStage.js';
 import { WorkspacePolicyStage } from './stages/WorkspacePolicyStage.js';
 import { PathPolicyStage } from './stages/PathPolicyStage.js';
 import { BackupPolicyStage } from './stages/BackupPolicyStage.js';
@@ -20,6 +22,10 @@ import { RuleStage } from './stages/RuleStage.js';
 import { SkillStage } from './stages/SkillStage.js';
 import { MemoryStage } from './stages/MemoryStage.js';
 import { CapabilityContextStage } from './stages/CapabilityContextStage.js';
+import { GuardPolicyDispatchStage } from './stages/GuardPolicyDispatchStage.js';
+import { PolicyEngine } from './policies/PolicyEngine.js';
+import { ProviderRegistry } from './providers/ProviderRegistry.js';
+import { SessionPersistenceProvider } from './providers/SessionPersistenceProvider.js';
 
 export {
   AgentRuntime,
@@ -32,6 +38,8 @@ export {
   SnapshotStage,
   SessionPersistStage,
   SessionStage,
+  ConversationLoadStage,
+  SessionLifecycleStage,
   WorkspacePolicyStage,
   PathPolicyStage,
   BackupPolicyStage,
@@ -43,5 +51,9 @@ export {
   RuleStage,
   SkillStage,
   MemoryStage,
-  CapabilityContextStage
+  CapabilityContextStage,
+  GuardPolicyDispatchStage,
+  PolicyEngine,
+  ProviderRegistry,
+  SessionPersistenceProvider
 };

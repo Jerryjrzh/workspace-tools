@@ -1,6 +1,7 @@
 // src/dispatcher.js - New Dispatcher using Runtime
 import { AgentRuntime } from './runtime/AgentRuntime.js';
 import { WorkspaceStage } from './runtime/stages/WorkspaceStage.js';
+import { GuardStage } from './runtime/stages/GuardStage.js';
 
 // Import slimmed tools
 import { file_read } from './tools/file_read.js';
@@ -22,6 +23,7 @@ function createRuntime() {
   
   // Register core stages
   runtime.use(WorkspaceStage);
+  runtime.use(GuardStage);
   
   // Add tool execution as final stage
   runtime.use(async (ctx, next) => {

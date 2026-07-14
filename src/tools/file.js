@@ -1,5 +1,4 @@
 // src/tools/file.js
-import { workspaceManager } from '../managers/workspace.js';
 import { ToolMiddleware } from '../utils/middleware.js';
 import fs from 'fs';
 import path from 'path';
@@ -21,7 +20,7 @@ function backupFileBeforePatch(filePath, context) {
   try {
     if (!fs.existsSync(filePath)) return null; // No backup needed for new files
     
-    const ws = context.workspace || workspaceManager.getWorkspace() || process.cwd();
+    const ws = context.workspace || process.cwd();
     const backupDirPath = path.join(ws, BACKUP_DIR);
     
     if (!fs.existsSync(backupDirPath)) {

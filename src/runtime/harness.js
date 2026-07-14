@@ -33,6 +33,10 @@ function createToolHarness(toolFn, testCase) {
     // Add WorkspaceStage if test provides workspace
     if (testCase.workspace) {
       runtime.use(WorkspaceStage);
+      runtime.use((ctx, next) => {
+        ctx.state = ctx.state || {};
+        return next();
+      });
     }
     
     // Add tool as final stage

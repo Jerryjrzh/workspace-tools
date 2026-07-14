@@ -3,6 +3,7 @@ import { workspaceManager } from '../managers/workspace.js';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import { execSync as execSyncChild } from 'child_process';
 
 export const workspaceTools = [
   {
@@ -104,6 +105,5 @@ export async function handleWorkspaceTools(name, args, convId) {
 
 // Helper function for running commands (simplified)
 function execSync(command, options) {
-  const { exec } = require('child_process');
-  return require('child_process').execSync(command, options);
+  return execSyncChild(command, options);
 }

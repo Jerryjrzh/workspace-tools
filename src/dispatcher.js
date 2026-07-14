@@ -2,6 +2,13 @@
 import { AgentRuntime } from './runtime/AgentRuntime.js';
 import { WorkspaceStage } from './runtime/stages/WorkspaceStage.js';
 import { GuardStage } from './runtime/stages/GuardStage.js';
+import { WorkspacePolicyStage } from './runtime/stages/WorkspacePolicyStage.js';
+import { PathPolicyStage } from './runtime/stages/PathPolicyStage.js';
+import { BackupPolicyStage } from './runtime/stages/BackupPolicyStage.js';
+import { RuleStage } from './runtime/stages/RuleStage.js';
+import { SkillStage } from './runtime/stages/SkillStage.js';
+import { MemoryStage } from './runtime/stages/MemoryStage.js';
+import { CapabilityContextStage } from './runtime/stages/CapabilityContextStage.js';
 
 // Import slimmed tools
 import { file_read } from './tools/file_read.js';
@@ -23,7 +30,14 @@ function createRuntime() {
   
   // Register core stages
   runtime.use(WorkspaceStage);
+  runtime.use(WorkspacePolicyStage);
+  runtime.use(PathPolicyStage);
+  runtime.use(BackupPolicyStage);
   runtime.use(GuardStage);
+  runtime.use(RuleStage);
+  runtime.use(SkillStage);
+  runtime.use(MemoryStage);
+  runtime.use(CapabilityContextStage);
   
   // Add tool execution as final stage
   runtime.use(async (ctx, next) => {

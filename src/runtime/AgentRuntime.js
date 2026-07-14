@@ -76,7 +76,7 @@ function createContext(initialData = {}) {
     workspace: initialData.workspace || null,
     session: {},     // Session state (to be loaded by SessionStage)
     conversation: null,
-    task: null,
+    task: initialData.task || null,
     rules: [],       // Active rules
     skills: [],      // Active skills
     

@@ -17,7 +17,8 @@ class RuleManager {
   }
 
   loadTask(taskName) {
-    const filePath = path.join(this.rulesDir, `${taskName}.md`);
+    const normalizedTask = String(taskName || '').toLowerCase();
+    const filePath = path.join(this.rulesDir, `${normalizedTask}.md`);
     if (fs.existsSync(filePath)) {
       return fs.readFileSync(filePath, 'utf8');
     }

@@ -2,6 +2,7 @@
 import { AgentRuntime } from './AgentRuntime.js';
 import { WorkspaceStage } from './stages/WorkspaceStage.js';
 import { GuardStage } from './stages/GuardStage.js';
+import { RuntimeContextStage } from './stages/RuntimeContextStage.js';
 
 /**
  * Run a single test case
@@ -34,6 +35,7 @@ function createToolHarness(toolFn, testCase) {
     // Add WorkspaceStage if test provides workspace
     if (testCase.workspace) {
       runtime.use(WorkspaceStage);
+      runtime.use(RuntimeContextStage);
       if (testCase.stages) {
         for (const stage of testCase.stages) {
           runtime.use(stage);

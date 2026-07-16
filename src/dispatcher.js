@@ -1,19 +1,6 @@
 // src/dispatcher.js - New Dispatcher using Runtime
 import { AgentRuntime } from './runtime/AgentRuntime.js';
-import { WorkspaceStage } from './runtime/stages/WorkspaceStage.js';
-import { RuntimeContextStage } from './runtime/stages/RuntimeContextStage.js';
-import { SessionRecoveryStage } from './runtime/stages/SessionRecoveryStage.js';
-import { GuardStage } from './runtime/stages/GuardStage.js';
-import { WorkspacePolicyStage } from './runtime/stages/WorkspacePolicyStage.js';
-import { PathPolicyStage } from './runtime/stages/PathPolicyStage.js';
-import { BackupPolicyStage } from './runtime/stages/BackupPolicyStage.js';
-import { RuleStage } from './runtime/stages/RuleStage.js';
-import { SkillStage } from './runtime/stages/SkillStage.js';
-import { MemoryStage } from './runtime/stages/MemoryStage.js';
-import { MemoryExtractStage } from './runtime/stages/MemoryExtractStage.js';
-import { MemoryRetrieveStage } from './runtime/stages/MemoryRetrieveStage.js';
-import { CapabilityContextStage } from './runtime/stages/CapabilityContextStage.js';
-import { PlannerStage } from './runtime/stages/PlannerStage.js';
+import { applyRuntimeFramework } from './runtime/framework.js';
 import { ProviderRegistry } from './runtime/providers/ProviderRegistry.js';
 import { memoryProvider } from './runtime/providers/MemoryProvider.js';
 import { conversationProvider } from './runtime/providers/ConversationProvider.js';
@@ -49,20 +36,7 @@ function createRuntime() {
   const runtime = new AgentRuntime();
   runtime.providerRegistry = providerRegistry;
 
-  runtime.use(WorkspaceStage);
-  runtime.use(RuntimeContextStage);
-  runtime.use(SessionRecoveryStage);
-  runtime.use(WorkspacePolicyStage);
-  runtime.use(PathPolicyStage);
-  runtime.use(BackupPolicyStage);
-  runtime.use(RuleStage);
-  runtime.use(SkillStage);
-  runtime.use(MemoryStage);
-  runtime.use(MemoryExtractStage);
-  runtime.use(MemoryRetrieveStage);
-  runtime.use(CapabilityContextStage);
-  runtime.use(PlannerStage);
-  runtime.use(GuardStage);
+  applyRuntimeFramework(runtime);
 
   runtime.use(async (ctx, next) => {
     const toolName = ctx.toolRequest.name;

@@ -51,6 +51,7 @@ export async function PlannerStage(ctx, next) {
   ctx.planner = plan;
   ctx.session = ctx.session || {};
   ctx.session.executionPlan = plan;
+  ctx.session.planner = plan;
   return next();
 }
 

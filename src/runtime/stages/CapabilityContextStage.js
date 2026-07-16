@@ -26,6 +26,10 @@ export async function CapabilityContextStage(ctx, next) {
   ctx.session = ctx.session || {};
   ctx.session.capabilities = ctx.capabilities;
   ctx.session.promptContext = promptContext;
+  ctx.session.memorySnapshot = {
+    total: allMemory.entries?.length || 0,
+    retrieved: retrievedMemory.length
+  };
   return next();
 }
 

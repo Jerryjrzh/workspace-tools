@@ -11,6 +11,7 @@ export async function MemoryStage(ctx, next) {
   ctx.memory = sessionId ? manager.load(sessionId) : { entries: [] };
   ctx.session = ctx.session || {};
   ctx.session.memory = ctx.memory;
+  ctx.session.memoryStore = ctx.memory;
   return next();
 }
 

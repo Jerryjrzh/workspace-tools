@@ -13,10 +13,6 @@ export async function SessionRecoveryStage(ctx, next) {
     return next();
   }
 
-  if (!ctx.workspace && savedState.workspace) {
-    ctx.workspace = savedState.workspace;
-  }
-
   if (!ctx.task && savedState.task) {
     ctx.task = savedState.task;
   }
@@ -27,8 +23,12 @@ export async function SessionRecoveryStage(ctx, next) {
 
   ctx.session = ctx.session || {};
   ctx.session.recovered = true;
-  ctx.session.workspace = ctx.workspace || ctx.session.workspace || null;
   ctx.session.task = ctx.task || ctx.session.task || null;
+  ctx.session.recovery = {
+    workspace: Boolean(savedState.workspace),
+    task: Boolean(savedState.task),
+    conversation: Boolean(savedState.conversation)
+  };
   ctx.state = ctx.state || {};
   ctx.state.sessionRecovery = {
     workspace: Boolean(savedState.workspace),

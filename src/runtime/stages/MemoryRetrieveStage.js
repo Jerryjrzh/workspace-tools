@@ -50,6 +50,7 @@ export async function MemoryRetrieveStage(ctx, next) {
   };
   ctx.session = ctx.session || {};
   ctx.session.retrievedMemory = retrievedMemory;
+  ctx.session.memoryRetrieve = ctx.state.memoryRetrieve;
   return next();
 }
 

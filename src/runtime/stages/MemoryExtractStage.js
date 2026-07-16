@@ -83,6 +83,7 @@ export async function MemoryExtractStage(ctx, next) {
   ctx.session = ctx.session || {};
   ctx.session.memory = ctx.memory;
   ctx.session.memoryProvider = provider;
+  ctx.session.memoryExtract = ctx.state.memoryExtract;
   return next();
 }
 

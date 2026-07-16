@@ -60,11 +60,16 @@ class AgentRuntime extends EventEmitter {
 }
 
 function createContext(initialData = {}) {
+  const sessionId = initialData.sessionId || initialData.toolRequest?.conversationId || null;
   return {
-    sessionId: initialData.sessionId || null,
+    sessionId,
     taskId: initialData.taskId || null,
     workspace: initialData.workspace || null,
-    session: initialData.session || {},
+    session: {
+      ...(initialData.session || {}),
+      sessionId,
+      conversationId: initialData.toolRequest?.conversationId || initialData.conversationId || sessionId
+    },
     conversation: initialData.conversation || null,
     task: initialData.task || null,
     rules: initialData.rules || [],

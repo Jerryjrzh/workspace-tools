@@ -1,23 +1,17 @@
-import fs from 'fs';
-import path from 'path';
-import os from 'os';
+import { memoryManager } from '../../managers/memory.js';
+import { memoryProvider } from '../providers/MemoryProvider.js';
 
 export async function MemoryStage(ctx, next) {
   const sessionId = ctx.sessionId || ctx.toolRequest?.conversationId || null;
-  const memoryDir = path.join(os.homedir(), '.lmstudio', 'memory');
-  const memoryFile = sessionId ? path.join(memoryDir, `${sessionId}.json`) : null;
+  const provider = ctx.providerRegistry?.get?.('memory') || memoryProvider;
+  const manager = ctx.memoryManager || memoryManager;
 
-  let memory = { entries: [] };
-  if (memoryFile && fs.existsSync(memoryFile)) {
-    try {
-      memory = JSON.parse(fs.readFileSync(memoryFile, 'utf8'));
-    } catch {
-      memory = { entries: [] };
-    }
-  }
-
-  ctx.memory = memory;
+  ctx.memoryManager = manager;
+  ctx.memoryProvider = provider;
+  ctx.memory = sessionId ? manager.load(sessionId) : { entries: [] };
   ctx.session = ctx.session || {};
-  ctx.session.memory = memory;
+  ctx.session.memory = ctx.memory;
   return next();
 }
+
+export default MemoryStage;

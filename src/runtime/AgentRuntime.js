@@ -71,25 +71,31 @@ function createContext(initialData = {}) {
     // 1. Basic metadata
     sessionId: initialData.sessionId || null,
     taskId: initialData.taskId || null,
-    
+
     // 2. Core state (Single Source of Truth)
     workspace: initialData.workspace || null,
-    session: {},     // Session state (to be loaded by SessionStage)
-    conversation: null,
+    session: initialData.session || {},
+    conversation: initialData.conversation || null,
     task: initialData.task || null,
-    rules: [],       // Active rules
-    skills: [],      // Active skills
-    
+    rules: initialData.rules || [],
+    skills: initialData.skills || [],
+    memory: initialData.memory || { entries: [] },
+    retrievedMemory: initialData.retrievedMemory || [],
+
     // 3. Execution payload
     toolRequest: initialData.toolRequest || { name: '', args: {} },
-    
+
     // 4. Runtime buffer and state
-    state: {},       // Temporary state shared between stages
-    result: null,    // Final tool execution result
-    
-    // 5. Metadata
+    state: initialData.state || {},
+    result: initialData.result ?? null,
+
+    // 5. Injectable providers and managers
+    providerRegistry: initialData.providerRegistry || null,
+    memoryManager: initialData.memoryManager || null,
+
+    // 6. Metadata
     timestamp: Date.now(),
-    error: null
+    error: initialData.error || null
   };
 }
 

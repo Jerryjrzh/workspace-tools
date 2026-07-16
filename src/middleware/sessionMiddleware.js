@@ -37,7 +37,9 @@ const BOOTSTRAP_TOOLS = new Set([
 
 // Tools that need SessionContext but don't modify state
 const CONTEXT_READY_TOOLS = new Set([
-  // Placeholder for future context-only tools
+  'memory_remember',
+  'memory_forget',
+  'memory_search'
 ]);
 
 /**
@@ -125,14 +127,18 @@ export class SessionMiddleware {
    * @returns {Promise<Object>} - 执行结果
    */
   static async executeContextReady(toolName, args, conversationId) {
-    // Get or create session context
     const sessionId = await SessionResolver.resolve(conversationId);
     const context = sessionContextManager.getOrCreateContext(sessionId);
-    
+
     if (!context.workspace) {
       throw new Error('[ContextReady] Workspace not set. Please call workspace_set first.');
     }
-    
+
+    if (['memory_remember', 'memory_forget', 'memory_search'].includes(toolName)) {
+      const { handleMemoryTools } = await import('../tools/memory.js');
+      return handleMemoryTools(toolName, args, { sessionId });
+    }
+
     throw new Error(`Context Ready tool not implemented: ${toolName}`);
   }
 

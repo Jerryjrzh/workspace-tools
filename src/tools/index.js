@@ -12,6 +12,7 @@ import { reviewTools } from './review.js';
 import { tmuxTools } from './tmux.js';
 import { sessionTools } from './session.js';
 import { envTools } from './env.js';
+import { memoryTools } from './memory.js';
 
 import { handleWorkspaceTools } from './workspace.js';
 import { handleFileTools } from './file.js';
@@ -25,6 +26,7 @@ import { handleReviewTools } from './review.js';
 import { handleTmuxTools } from './tmux.js';
 import { handleSessionTools } from './session.js';
 import { handleEnvTools } from './env.js';
+import { handleMemoryTools } from './memory.js';
 
 /**
  * Route tool calls to appropriate handlers based on tool name
@@ -91,7 +93,12 @@ export const toolHandlers = {
   session_start: handleSessionTools,
   
   // Env tools
-  env_check: handleEnvTools
+  env_check: handleEnvTools,
+
+  // Memory tools
+  memory_remember: handleMemoryTools,
+  memory_forget: handleMemoryTools,
+  memory_search: handleMemoryTools
 };
 
 /**
@@ -109,5 +116,6 @@ export const ALL_TOOLS = [
   ...reviewTools,
   ...tmuxTools,
   ...sessionTools,
-  ...envTools
+  ...envTools,
+  ...memoryTools
 ];

@@ -1,9 +1,15 @@
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 
 const BACKUP_DIR = '.lmstudio-backups';
 const MAX_DIFF_LINES = 50;
+const MAX_TRANSACTION_DIFF_LINES = 500;
 const DEFAULT_FULL_READ_LINE_LIMIT = 500;
+
+function contentHash(content) {
+  return crypto.createHash('sha256').update(content, 'utf8').digest('hex');
+}
 
 function ensureDir(dirPath) {
   if (!fs.existsSync(dirPath)) {
@@ -27,18 +33,35 @@ function backupFileBeforePatch(filePath, workspace) {
   return backupPath;
 }
 
-function calculateDiffLines(oldContent, newContent) {
+function calculateLineDiff(oldContent, newContent) {
   const oldLines = oldContent.split('\n');
   const newLines = newContent.split('\n');
-  let diffCount = 0;
+  let prefix = 0;
+  while (prefix < oldLines.length && prefix < newLines.length && oldLines[prefix] === newLines[prefix]) prefix++;
 
-  for (let i = 0; i < Math.max(oldLines.length, newLines.length); i++) {
-    if (oldLines[i] !== newLines[i]) {
-      diffCount++;
-    }
-  }
+  let suffix = 0;
+  while (
+    suffix < oldLines.length - prefix &&
+    suffix < newLines.length - prefix &&
+    oldLines[oldLines.length - 1 - suffix] === newLines[newLines.length - 1 - suffix]
+  ) suffix++;
 
-  return diffCount;
+  const deletedLines = Math.max(0, oldLines.length - prefix - suffix);
+  const addedLines = Math.max(0, newLines.length - prefix - suffix);
+  return {
+    changedLines: Math.max(deletedLines, addedLines),
+    addedLines,
+    deletedLines,
+    changed: deletedLines > 0 || addedLines > 0,
+    oldStart: prefix + 1,
+    oldEnd: prefix + deletedLines,
+    newStart: prefix + 1,
+    newEnd: prefix + addedLines
+  };
+}
+
+function calculateDiffLines(oldContent, newContent) {
+  return calculateLineDiff(oldContent, newContent).changedLines;
 }
 
 async function runCompileCheck(filePath) {
@@ -55,28 +78,56 @@ async function runCompileCheck(filePath) {
   }
 }
 
-async function safeWrite(filePath, newContent, workspace, expectedDiffSize = null) {
+async function safeWrite(filePath, newContent, workspace, options = {}) {
+  const normalizedOptions = typeof options === 'number' || options === null
+    ? { expectedDiffSize: options }
+    : options;
   const oldContent = fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8') : '';
-  const diffLines = calculateDiffLines(oldContent, newContent);
-  if (diffLines > MAX_DIFF_LINES) {
-    throw new Error(`❌ 修改行数超过 ${MAX_DIFF_LINES} 行安全限制。实际变更: ${diffLines} 行`);
+  const diff = calculateLineDiff(oldContent, newContent);
+  const maxDiffLines = normalizedOptions.maxDiffLines ?? MAX_DIFF_LINES;
+  if (diff.changedLines > maxDiffLines) {
+    const error = new Error(`修改规模超过 ${maxDiffLines} 行安全限制。实际变更: ${diff.changedLines} 行`);
+    error.code = 'PATCH_TOO_LARGE';
+    error.details = diff;
+    throw error;
   }
 
   const dir = path.dirname(filePath);
   ensureDir(dir);
   const backupPath = backupFileBeforePatch(filePath, workspace);
-  fs.writeFileSync(filePath, newContent, 'utf8');
+  const hashBefore = contentHash(oldContent);
+  const tempPath = `${filePath}.lmstudio-${process.pid}-${Date.now()}.tmp`;
+  fs.writeFileSync(tempPath, newContent, 'utf8');
+  fs.renameSync(tempPath, filePath);
 
   try {
     await runCompileCheck(filePath);
   } catch (error) {
-    if (backupPath && fs.existsSync(backupPath)) {
-      fs.copyFileSync(backupPath, filePath);
-    }
+    if (backupPath && fs.existsSync(backupPath)) fs.copyFileSync(backupPath, filePath);
     throw error;
   }
 
-  return { backupPath, diffLines, expectedDiffSize };
+  const writtenContent = fs.readFileSync(filePath, 'utf8');
+  const hashAfter = contentHash(writtenContent);
+  if (hashAfter !== contentHash(newContent)) {
+    if (backupPath && fs.existsSync(backupPath)) fs.copyFileSync(backupPath, filePath);
+    throw new Error(`写入验证失败: ${filePath}`);
+  }
+
+  return {
+    ok: true,
+    status: 'committed',
+    path: filePath,
+    changed: diff.changed,
+    ...diff,
+    backupPath,
+    hashBefore,
+    hashAfter,
+    expectedDiffSize: normalizedOptions.expectedDiffSize ?? null,
+    validation: { writeVerified: true, syntaxChecked: ['.js', '.mjs', '.cjs', '.ts'].includes(path.extname(filePath).toLowerCase()), syntaxOk: true },
+    nextAction: 'none',
+    rereadRequired: false
+  };
 }
 
 function readFile(filePath, mode = 'full', options = {}) {
@@ -113,20 +164,31 @@ function readFile(filePath, mode = 'full', options = {}) {
   }
 
   const rangeContent = lines.slice(startLine - 1, endLine).join('\n');
-  if (!buffered && effectiveMode === 'full') {
-    return { content: rangeContent, totalLines, truncated: false, mode: 'full' };
-  }
-
+  const truncated = endLine < totalLines;
   return {
-    bufferId: `buf_${Date.now()}`,
+    ok: true,
+    status: 'read',
+    operation: 'file_read',
+    bufferId: buffered ? `buf_${Date.now()}` : null,
     path: filePath,
     startLine,
     endLine,
     totalLines,
     content: rangeContent,
-    truncated: endLine < totalLines,
-    mode: effectiveMode
+    truncated,
+    nextStartLine: truncated ? endLine + 1 : null,
+    mode: effectiveMode,
+    nextAction: truncated ? 'continue_or_target' : 'none'
   };
 }
 
-export { BACKUP_DIR, MAX_DIFF_LINES, safeWrite, readFile, backupFileBeforePatch };
+export {
+  BACKUP_DIR,
+  MAX_DIFF_LINES,
+  MAX_TRANSACTION_DIFF_LINES,
+  contentHash,
+  calculateLineDiff,
+  safeWrite,
+  readFile,
+  backupFileBeforePatch
+};

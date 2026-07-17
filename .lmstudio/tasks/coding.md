@@ -30,76 +30,30 @@ const template = `line1\nline2`;
 
 ## 4. CRITICAL TOOL RULE（关键工具规则）
 
-**除非是创建全新文件，否则绝对禁止使用 `file_write` 来修改现有文件！**
+**除非创建新文件或用户明确要求整文件替换，否则不要使用 `file_write` 修改现有文件。**
 
-### 修改现有代码时，必须且只能使用以下方式：
+### 修改现有代码时按范围选择方式
 
-#### 方式 A：`file_patch` 的 operation 模式（推荐）
-```javascript
-// ✅ 正确：精确替换指定行
-file_patch({
-  path: "server.js",
-  mode: "context",
-  line: 42,
-  window: 10,
-  old_str: "const start =",
-  new_str: "const startLine ="
-});
-```
-
-#### 方式 B：`file_read_patch_write`（读取+修改+写入）
-```javascript
-// ✅ 正确：原子操作，适合小范围修改
-file_read_patch_write({
-  path: "config.js",
-  old_str: "timeout: 30",
-  new_str: "timeout: 60"
-});
-```
-
-### 禁止的操作：
-```javascript
-// ❌ 错误：全文件重写（除非创建新文件）
-file_write({ path: "server.js", content: "..." });
-```
+- 小范围唯一文本：使用 `file_patch` 的 `old_str/new_str`。
+- 已知行位置：使用 `replace_line`、`insert_line`、`delete_lines` 或 `replace_lines`。
+- 大范围或多处关联修改：使用 `edit_begin` -> `edit_apply` -> `edit_review` -> `edit_commit`。
+- 匹配返回 `MATCH_NOT_UNIQUE` 时必须缩小上下文或改用行操作，不得强行全局替换。
+- 返回 `PATCH_TOO_LARGE` 时按 `nextAction` 改用编辑事务；除非 `rereadRequired=true`，不得重新缩小窗口读取，也不得拆成缺乏语义关联的大量盲目 patch。
+- 对已完整生成且需要整体替换的内容，允许使用具备备份、原子写入、hash 与语法验证的 `file_write`，不以固定 50 行阈值强制拆分。
 
 ## 5. Post-Write Validation（写后验证）
 
-每次修改 `.js` 文件后，**必须立即执行语法校验**：
-
-```bash
-# 强制流程：
-1. 运行 `node -c <file_path>` 检查语法错误
-2. 如果报错，立即调用 `file_rollback` 回滚文件
-3. 分析错误原因，进行更精确的编辑
-4. 重复直到 `node -c` 完美通过
-```
-
-### 自动回滚示例：
-```javascript
-// 修改后必须执行
-const { execSync } = require('child_process');
-try {
-  execSync(`node -c ${filePath}`, { stdio: 'pipe' });
-  console.log('✓ Syntax OK');
-} catch (error) {
-  // 自动回滚并报告
-  file_rollback({ path: filePath });
-  throw new Error(`Syntax error in ${filePath}: ${error.message}`);
-}
-```
+- 优先使用修改工具返回的 `validation` 结果。
+- 当 `validation.writeVerified=true` 且 `validation.syntaxOk=true` 时，不重复读取文件或重复执行同一语法检查。
+- 当验证失败时，工具应自动回滚；随后读取最新磁盘内容，分析错误并进行更精确的修改。
+- 修改完成后运行与变更相关的测试或 lint，不执行无关验证。
 
 ## 6. Session Management（会话管理）
 
-### 完成重大 Bug 修复后，必须：
-
-1. **立即停止当前对话**
-2. 调用 `session_summarize` 记录当前进度
-3. **开启一个全新的聊天窗口**
-4. 调用 `session_start` 继续
-
-### 原理：
-在新会话中，模型的上下文是干净的，它只能通过 `file_read` 从硬盘读取**目前绝对正确**的代码，彻底断绝了它去"抄历史错题本"的可能。
+- 新会话先执行 `session_start`，除非运行时明确报告会话已初始化。
+- 重大修复后记录持久化摘要或检查点，但不强制中断仍可正常推进的当前会话。
+- 历史上下文与磁盘内容冲突时，以新鲜磁盘内容为准。
+- 工具返回冲突状态时重新读取目标文件，不通过开启新会话规避状态问题。
 
 ---
 

@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { backupFileBeforePatch, safeWrite, readFile } from './fileExecutor.js';
+import { MAX_TRANSACTION_DIFF_LINES, contentHash, safeWrite, readFile } from './fileExecutor.js';
 
 const bufferPool = new Map();
 
@@ -73,8 +73,10 @@ export function beginEdit(filePath, args = {}) {
     startLine: buffer.startLine,
     endLine: buffer.endLine,
     originalLines: buffer.totalLines,
+    sourceHash: contentHash(fs.readFileSync(filePath, 'utf8')),
     createdAt: Date.now(),
     truncated: buffer.truncated === true,
+    dirty: false,
     readMode
   });
   return {
@@ -90,15 +92,30 @@ export function beginEdit(filePath, args = {}) {
 
 export function applyEdit(bufferId, replacements = []) {
   const buffer = bufferPool.get(bufferId);
-  if (!buffer) return { error: `Buffer 不存在: ${bufferId}` };
+  if (!buffer) return { ok: false, status: 'not_found', errorCode: 'BUFFER_NOT_FOUND', error: `Buffer 不存在: ${bufferId}` };
   const lines = buffer.content.split('\n');
+  let applied = 0;
+  let rejected = 0;
   for (const replacement of replacements) {
-    const idx = Math.max(replacement.line, 1) - 1;
-    if (idx < lines.length && replacement.new_content !== undefined) lines[idx] = replacement.new_content;
+    const idx = Math.max(Number(replacement.line) || 1, 1) - 1;
+    if (idx < lines.length && replacement.new_content !== undefined) {
+      lines[idx] = replacement.new_content;
+      applied++;
+    } else rejected++;
   }
   buffer.content = lines.join('\n');
+  buffer.dirty = buffer.dirty || applied > 0;
   bufferPool.set(bufferId, buffer);
-  return { bufferId, path: buffer.path, modified: true };
+  return {
+    ok: rejected === 0,
+    status: applied > 0 ? 'applied' : 'unchanged',
+    bufferId,
+    path: buffer.path,
+    appliedReplacements: applied,
+    rejectedReplacements: rejected,
+    dirty: buffer.dirty,
+    nextAction: applied > 0 ? 'edit_review' : 'correct_replacements'
+  };
 }
 
 export async function reviewEdit(bufferId, language = null) {
@@ -120,14 +137,27 @@ export async function reviewEdit(bufferId, language = null) {
 
 export async function commitEdit(bufferId, workspace = null) {
   const buffer = bufferPool.get(bufferId);
-  if (!buffer) return { error: `Buffer 不存在: ${bufferId}` };
+  if (!buffer) return { ok: false, status: 'not_found', errorCode: 'BUFFER_NOT_FOUND', error: `Buffer 不存在: ${bufferId}` };
   const filePath = path.resolve(workspace || process.cwd(), buffer.path);
-  const currentLines = fs.readFileSync(filePath, 'utf8').split('\n');
+  const currentContent = fs.readFileSync(filePath, 'utf8');
+  if (contentHash(currentContent) !== buffer.sourceHash) {
+    return {
+      ok: false,
+      status: 'conflict',
+      errorCode: 'SOURCE_CHANGED',
+      path: filePath,
+      nextAction: 'edit_cancel_and_reread',
+      rereadRequired: true
+    };
+  }
+  if (!buffer.dirty) {
+    return { ok: true, status: 'unchanged', path: filePath, changed: false, nextAction: 'none', rereadRequired: false };
+  }
+  const currentLines = currentContent.split('\n');
   const newLines = [...currentLines.slice(0, buffer.startLine - 1), ...buffer.content.split('\n'), ...currentLines.slice(buffer.endLine)];
-  const backupPath = backupFileBeforePatch(filePath, workspace);
-  await safeWrite(filePath, newLines.join('\n'), workspace, null);
+  const result = await safeWrite(filePath, newLines.join('\n'), workspace, { maxDiffLines: MAX_TRANSACTION_DIFF_LINES });
   bufferPool.delete(bufferId);
-  return { path: filePath, backupPath, message: `✅ 编辑已提交！备份路径: ${backupPath || '无'}` };
+  return { ...result, operation: 'edit_commit', bufferId };
 }
 
 export function cancelEdit(bufferId) {

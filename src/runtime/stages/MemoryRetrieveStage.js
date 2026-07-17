@@ -41,15 +41,36 @@ export async function MemoryRetrieveStage(ctx, next) {
   const retrievedMemory = manager.search(sessionId, query, {
     limit: manager.maxRetrieve
   });
+  const identityMemory = manager.search(sessionId, query, {
+    limit: 3,
+    domain: 'identity'
+  });
+  const soulMemory = manager.search(sessionId, query, {
+    limit: 3,
+    domain: 'soul'
+  });
+  const workingMemory = manager.search(sessionId, query, {
+    limit: 3,
+    domain: 'working'
+  });
 
   ctx.retrievedMemory = retrievedMemory;
+  ctx.retrievedIdentityMemory = identityMemory;
+  ctx.retrievedSoulMemory = soulMemory;
+  ctx.retrievedWorkingMemory = workingMemory;
   ctx.state = ctx.state || {};
   ctx.state.memoryRetrieve = {
     query,
-    count: retrievedMemory.length
+    count: retrievedMemory.length,
+    identityCount: identityMemory.length,
+    soulCount: soulMemory.length,
+    workingCount: workingMemory.length
   };
   ctx.session = ctx.session || {};
   ctx.session.retrievedMemory = retrievedMemory;
+  ctx.session.retrievedIdentityMemory = identityMemory;
+  ctx.session.retrievedSoulMemory = soulMemory;
+  ctx.session.retrievedWorkingMemory = workingMemory;
   ctx.session.memoryRetrieve = ctx.state.memoryRetrieve;
   return next();
 }

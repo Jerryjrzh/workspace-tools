@@ -6,10 +6,9 @@ import { conversationManager } from './conversation.js';
 import { sessionContextManager } from './sessionContext.js';
 import { SessionResolver } from './sessionResolver.js';
 import { SessionMiddleware } from '../middleware/sessionMiddleware.js';
+import { workspaceManager } from './workspace.js';
+import { ruleManager } from './rules.js';
 
-/**
- * Load workspace log file (local helper, also defined in server.js)
- */
 function loadWorkspaceLog(ws) {
   try {
     const logPath = path.join(ws || process.cwd(), '.lmstudio-workspace.json');
@@ -21,15 +20,10 @@ function loadWorkspaceLog(ws) {
 }
 
 export async function handleSessionStart(args, passedConvId) {
-  const mode = args.mode || 'fast'; // Implement fast/deep split mode
-
-  // 1. Resolve session ID using SessionResolver (no more 'default'污染)
+  const mode = args.mode || 'fast';
   const sessionId = await SessionResolver.resolve(passedConvId);
-
-  // 2. Get or create unified context
   const context = sessionContextManager.getOrCreateContext(sessionId);
 
-  // 3. Load conversation data
   let convData = { messages: [] };
   try {
     convData = await conversationManager.loadConversation(sessionId);
@@ -37,39 +31,37 @@ export async function handleSessionStart(args, passedConvId) {
     console.warn(`[Session ${sessionId}] 会话加载失败，按空会话处理`);
   }
 
-  // 4. Delegate parsing to appropriate managers
-  const inferredWorkspace = context.workspace || null; // Workspace is set by middleware or session_start
   const detectedTask = conversationManager.detectTaskType(convData);
+  const workspaceFromContext = context.workspace || workspaceManager.getWorkspaceForSession(sessionId) || workspaceManager.getWorkspace() || process.cwd();
+  const rules = await ruleManager.loadGlobalRules();
 
-  // 5. Update unified context
-  if (args.path) {
-    context.workspace = args.path;
-  }
+  context.workspace = workspaceFromContext;
   context.task = detectedTask;
+  context.rules = rules;
   context.initialized = true;
 
-  // 6. Persist context
   await SessionMiddleware.updateContext(sessionId, {
     workspace: context.workspace,
     task: context.task,
+    rules: context.rules,
     initialized: context.initialized
   });
 
-  // 7. Return standardized state
-  const currentWs = context.workspace || "⚠️ 未设置";
-  
+  const currentWs = context.workspace || '⚠️ 未设置';
+
   try {
     const wsLog = loadWorkspaceLog(currentWs);
     const lastWsSession = wsLog.sessions?.slice(-1)[0];
 
     return {
-      status: "READY",
+      status: 'SESSION_READY',
       workspace: currentWs,
       session_id: sessionId,
-      active_task: context.task || "none",
+      active_task: context.task || 'none',
+      rules_loaded: rules.length,
       details: {
-        message: "环境已就绪，可以开始执行工具调用。",
-        mode: mode,
+        message: '环境已就绪，可以开始执行工具调用。',
+        mode,
         last_archived_session: lastWsSession ? {
           date: lastWsSession.date,
           summary: lastWsSession.summary,
@@ -81,13 +73,14 @@ export async function handleSessionStart(args, passedConvId) {
     };
   } catch (error) {
     return {
-      status: "READY",
+      status: 'SESSION_READY',
       workspace: currentWs,
       session_id: sessionId,
-      active_task: context.task || "none",
+      active_task: context.task || 'none',
+      rules_loaded: rules.length,
       details: {
-        message: "环境已就绪，可以开始执行工具调用。",
-        mode: mode,
+        message: '环境已就绪，可以开始执行工具调用。',
+        mode,
         error: error.message
       }
     };

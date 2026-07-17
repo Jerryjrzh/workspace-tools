@@ -9,6 +9,9 @@ import { SkillStage } from './stages/SkillStage.js';
 import { MemoryStage } from './stages/MemoryStage.js';
 import { MemoryExtractStage } from './stages/MemoryExtractStage.js';
 import { MemoryRetrieveStage } from './stages/MemoryRetrieveStage.js';
+import { IdentityRetrieveStage } from './stages/IdentityRetrieveStage.js';
+import { SoulRetrieveStage } from './stages/SoulRetrieveStage.js';
+import { BackgroundContextStage } from './stages/BackgroundContextStage.js';
 import { CapabilityContextStage } from './stages/CapabilityContextStage.js';
 import { PlannerStage } from './stages/PlannerStage.js';
 import { GuardStage } from './stages/GuardStage.js';
@@ -28,6 +31,9 @@ export const runtimeFramework = {
     MemoryStage,
     MemoryExtractStage,
     MemoryRetrieveStage,
+    IdentityRetrieveStage,
+    SoulRetrieveStage,
+    BackgroundContextStage,
     CapabilityContextStage,
     PlannerStage,
     GuardStage

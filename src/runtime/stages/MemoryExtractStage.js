@@ -8,6 +8,20 @@ const EXPLICIT_REMEMBER_PATTERNS = [
   /默认使用[：:]?\s*(.+)/i
 ];
 
+const IDENTITY_PATTERNS = [
+  { regex: /我是\s*(.+)/i, confidence: 0.92 },
+  { regex: /我叫\s*(.+)/i, confidence: 0.95 },
+  { regex: /我的职业是\s*(.+)/i, confidence: 0.9 },
+  { regex: /我来自\s*(.+)/i, confidence: 0.88 }
+];
+
+const SOUL_PATTERNS = [
+  { regex: /请用\s*(.+)回复/i, confidence: 0.92 },
+  { regex: /请保持\s*(.+)风格/i, confidence: 0.9 },
+  { regex: /回答要\s*(.+)/i, confidence: 0.85 },
+  { regex: /默认(语言|语气|格式)是\s*(.+)/i, confidence: 0.92 }
+];
+
 const PREFERENCE_PATTERNS = [
   { regex: /我喜欢\s*(.+)/i, type: 'preference', confidence: 0.85 },
   { regex: /我主要(写|用|使用)\s*(.+)/i, type: 'preference', confidence: 0.9 },
@@ -33,8 +47,35 @@ function extractCandidatesFromText(text) {
       candidates.push({
         value: match[1].trim(),
         type: 'instruction',
+        domain: 'session',
         confidence: 0.95,
         source: 'explicit'
+      });
+    }
+  }
+
+  for (const pattern of IDENTITY_PATTERNS) {
+    const match = text.match(pattern.regex);
+    if (match?.[1]) {
+      candidates.push({
+        value: match[1].trim(),
+        type: 'fact',
+        domain: 'identity',
+        confidence: pattern.confidence,
+        source: 'extracted'
+      });
+    }
+  }
+
+  for (const pattern of SOUL_PATTERNS) {
+    const match = text.match(pattern.regex);
+    if (match?.[1]) {
+      candidates.push({
+        value: match[1].trim(),
+        type: 'preference',
+        domain: 'soul',
+        confidence: pattern.confidence,
+        source: 'extracted'
       });
     }
   }
@@ -47,6 +88,7 @@ function extractCandidatesFromText(text) {
         candidates.push({
           value,
           type: pattern.type,
+          domain: 'soul',
           confidence: pattern.confidence,
           source: 'extracted'
         });
@@ -74,7 +116,16 @@ export async function MemoryExtractStage(ctx, next) {
     decisions.push(decision);
   }
 
-  ctx.memory = manager.load(sessionId);
+  if (userMessages.length > 0) {
+    manager.recordActivity(sessionId, {
+      type: 'user_message',
+      summary: userMessages[userMessages.length - 1].slice(0, 240)
+    });
+  }
+
+  manager.dedupe(sessionId);
+  ctx.memory = manager.loadStore(sessionId);
+  ctx.memoryBackground = manager.getBackgroundContext(sessionId);
   ctx.state = ctx.state || {};
   ctx.state.memoryExtract = {
     candidates,
@@ -84,6 +135,7 @@ export async function MemoryExtractStage(ctx, next) {
   ctx.session.memory = ctx.memory;
   ctx.session.memoryProvider = provider;
   ctx.session.memoryExtract = ctx.state.memoryExtract;
+  ctx.session.memoryBackground = ctx.memoryBackground;
   return next();
 }
 

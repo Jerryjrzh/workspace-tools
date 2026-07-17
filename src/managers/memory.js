@@ -1,10 +1,33 @@
 import { memoryProvider } from '../runtime/providers/MemoryProvider.js';
 
+const MEMORY_DOMAINS = ['session', 'working', 'identity', 'soul'];
+
+const DEFAULT_POLICY = {
+  allowedSources: ['explicit', 'extracted'],
+  blockedTypes: ['temp'],
+  minConfidence: 0.7,
+  domainPriority: {
+    identity: 3,
+    soul: 2,
+    working: 2,
+    session: 1
+  },
+  expirationDays: {
+    location: 365,
+    occupation: 730,
+    project_status: 180,
+    preference: null,
+    fact: null
+  }
+};
+
 export class MemoryManager {
   constructor(provider = memoryProvider, options = {}) {
     this.provider = provider;
     this.confidenceThreshold = options.confidenceThreshold ?? 0.7;
     this.maxRetrieve = options.maxRetrieve ?? 8;
+    this.maxRecentActivity = options.maxRecentActivity ?? 6;
+    this.policy = options.policy || DEFAULT_POLICY;
   }
 
   load(sessionId) {
@@ -26,6 +49,70 @@ export class MemoryManager {
       .replace(/^_|_$/g, '')
       .slice(0, 48);
     return slug || 'memory';
+  }
+
+  normalizeDomain(domain = 'session') {
+    return MEMORY_DOMAINS.includes(domain) ? domain : 'session';
+  }
+
+  getDomainPriority(domain = 'session') {
+    const normalized = this.normalizeDomain(domain);
+    return this.policy.domainPriority[normalized] || DEFAULT_POLICY.domainPriority[normalized] || 1;
+  }
+
+  createEmptyStore() {
+    return {
+      entries: [],
+      profiles: {
+        identity: [],
+        soul: []
+      },
+      recentActivity: [],
+      policies: {
+        ...DEFAULT_POLICY,
+        minConfidence: this.confidenceThreshold
+      },
+      updatedAt: new Date().toISOString()
+    };
+  }
+
+  ensureStoreShape(store = {}) {
+    const base = this.createEmptyStore();
+    return {
+      ...base,
+      ...store,
+      entries: Array.isArray(store.entries) ? store.entries : [],
+      profiles: {
+        identity: Array.isArray(store.profiles?.identity) ? store.profiles.identity : [],
+        soul: Array.isArray(store.profiles?.soul) ? store.profiles.soul : []
+      },
+      recentActivity: Array.isArray(store.recentActivity) ? store.recentActivity : [],
+      policies: {
+        ...base.policies,
+        ...(store.policies || {})
+      }
+    };
+  }
+
+  loadStore(sessionId) {
+    return this.ensureStoreShape(this.load(sessionId));
+  }
+
+  saveStore(sessionId, store) {
+    return this.save(sessionId, this.ensureStoreShape(store));
+  }
+
+  recordActivity(sessionId, activity) {
+    const store = this.loadStore(sessionId);
+    store.recentActivity = [
+      {
+        id: this.generateId(),
+        ...activity,
+        timestamp: new Date().toISOString()
+      },
+      ...store.recentActivity
+    ].slice(0, this.maxRecentActivity);
+    return this.saveStore(sessionId, store);
   }
 
   findByKey(entries, key) {
@@ -86,18 +173,22 @@ export class MemoryManager {
   }
 
   mergeEntries(existing, incoming) {
+    const mergedDomain = this.getDomainPriority(incoming.domain) >= this.getDomainPriority(existing.domain)
+      ? incoming.domain
+      : existing.domain;
     return {
       ...existing,
       ...incoming,
+      domain: mergedDomain,
       value: this.mergeValues(existing.value, incoming.value),
       confidence: Math.max(existing.confidence || 0, incoming.confidence || 0),
       updatedAt: new Date().toISOString()
     };
   }
 
-  remember(sessionId, input = {}) {
-    const store = this.load(sessionId);
-    const entries = [...(store.entries || [])];
+  upsertEntry(sessionId, input = {}) {
+    const store = this.loadStore(sessionId);
+    const entries = [...store.entries];
     const key = input.key || this.generateKey(input.value);
     const existingIndex = entries.findIndex((entry) => entry.key === key);
     const entry = {
@@ -105,6 +196,7 @@ export class MemoryManager {
       key,
       value: input.value,
       type: input.type || 'fact',
+      domain: this.normalizeDomain(input.domain || 'session'),
       confidence: input.confidence ?? 1,
       source: input.source || 'explicit',
       createdAt: existingIndex >= 0 ? entries[existingIndex].createdAt : new Date().toISOString(),
@@ -118,28 +210,41 @@ export class MemoryManager {
     }
 
     store.entries = entries;
-    this.save(sessionId, store);
+    this.saveStore(sessionId, store);
     return existingIndex >= 0 ? entries[existingIndex] : entry;
   }
 
+  remember(sessionId, input = {}) {
+    const domain = this.normalizeDomain(input.domain || 'session');
+    if (domain === 'identity' || domain === 'soul') {
+      return this.updateProfile(sessionId, domain, input);
+    }
+
+    return this.upsertEntry(sessionId, { ...input, domain });
+  }
+
   forget(sessionId, keyOrId) {
-    const store = this.load(sessionId);
-    const entries = store.entries || [];
-    const nextEntries = entries.filter(
+    const store = this.loadStore(sessionId);
+    const entryCountBefore = store.entries.length;
+    store.entries = store.entries.filter(
       (entry) => entry.key !== keyOrId && entry.id !== keyOrId
     );
 
-    if (nextEntries.length === entries.length) {
-      return { removed: false };
+    for (const domain of ['identity', 'soul']) {
+      store.profiles[domain] = store.profiles[domain].filter(
+        (entry) => entry.key !== keyOrId && entry.id !== keyOrId
+      );
     }
 
-    store.entries = nextEntries;
-    this.save(sessionId, store);
-    return { removed: true };
+    const removed = entryCountBefore !== store.entries.length;
+    if (removed) {
+      this.saveStore(sessionId, store);
+    }
+    return { removed };
   }
 
   update(sessionId, key, updates = {}) {
-    const store = this.load(sessionId);
+    const store = this.loadStore(sessionId);
     const entries = store.entries || [];
     const index = entries.findIndex((entry) => entry.key === key || entry.id === key);
     if (index < 0) {
@@ -152,12 +257,48 @@ export class MemoryManager {
       updatedAt: new Date().toISOString()
     };
     store.entries = entries;
-    this.save(sessionId, store);
+    this.saveStore(sessionId, store);
     return entries[index];
   }
 
+  updateProfile(sessionId, domain, input = {}) {
+    const store = this.loadStore(sessionId);
+    const profile = store.profiles[domain] || [];
+    const key = input.key || this.generateKey(input.value);
+    const existingIndex = profile.findIndex((entry) => entry.key === key);
+    const entry = {
+      id: existingIndex >= 0 ? profile[existingIndex].id : this.generateId(),
+      key,
+      value: input.value,
+      type: input.type || (domain === 'soul' ? 'preference' : 'fact'),
+      domain,
+      confidence: input.confidence ?? 1,
+      source: input.source || 'explicit',
+      createdAt: existingIndex >= 0 ? profile[existingIndex].createdAt : new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+
+    if (existingIndex >= 0) {
+      profile[existingIndex] = this.mergeEntries(profile[existingIndex], entry);
+    } else {
+      profile.push(entry);
+    }
+
+    store.profiles[domain] = profile;
+    this.saveStore(sessionId, store);
+    return existingIndex >= 0 ? profile[existingIndex] : entry;
+  }
+
+  updateIdentity(sessionId, input = {}) {
+    return this.updateProfile(sessionId, 'identity', input);
+  }
+
+  updateSoul(sessionId, input = {}) {
+    return this.updateProfile(sessionId, 'soul', input);
+  }
+
   merge(sessionId, candidate) {
-    const store = this.load(sessionId);
+    const store = this.loadStore(sessionId);
     const similar = this.findSimilar(store.entries || [], candidate);
     if (!similar) {
       return this.remember(sessionId, candidate);
@@ -177,10 +318,24 @@ export class MemoryManager {
       return { action: 'ignore', reason: 'low_confidence', candidate };
     }
 
-    const store = this.load(sessionId);
+    if (!this.isAllowed(candidate)) {
+      return { action: 'ignore', reason: 'policy_blocked', candidate };
+    }
+
+    const domain = this.normalizeDomain(candidate.domain || 'session');
+    if (domain === 'identity') {
+      const entry = this.updateIdentity(sessionId, { ...candidate, domain });
+      return { action: 'identity', entry, candidate };
+    }
+    if (domain === 'soul') {
+      const entry = this.updateSoul(sessionId, { ...candidate, domain });
+      return { action: 'soul', entry, candidate };
+    }
+
+    const store = this.loadStore(sessionId);
     const similar = this.findSimilar(store.entries || [], candidate);
     if (!similar) {
-      const entry = this.remember(sessionId, { ...candidate, source: candidate.source || 'extracted' });
+      const entry = this.remember(sessionId, { ...candidate, source: candidate.source || 'extracted', domain });
       return { action: 'save', entry, candidate };
     }
 
@@ -200,8 +355,9 @@ export class MemoryManager {
 
   search(sessionId, query = '', options = {}) {
     const limit = options.limit ?? this.maxRetrieve;
-    const store = this.load(sessionId);
-    const entries = store.entries || [];
+    const domain = options.domain ? this.normalizeDomain(options.domain) : null;
+    const store = this.loadStore(sessionId);
+    const entries = domain ? store.entries.filter((entry) => entry.domain === domain) : store.entries;
 
     if (!query.trim()) {
       return entries
@@ -213,7 +369,7 @@ export class MemoryManager {
     const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
     const scored = entries
       .map((entry) => {
-        const text = `${entry.key} ${entry.value} ${entry.type}`.toLowerCase();
+        const text = `${entry.key} ${entry.value} ${entry.type} ${entry.domain}`.toLowerCase();
         let score = 0;
         for (const term of terms) {
           if (text.includes(term)) {
@@ -238,6 +394,92 @@ export class MemoryManager {
     }
 
     return scored.slice(0, limit).map((item) => item.entry);
+  }
+
+  dedupe(sessionId) {
+    const store = this.loadStore(sessionId);
+    const entries = store.entries || [];
+    const deduped = [];
+    const mergedDuplicates = [];
+
+    for (const entry of entries) {
+      const similar = deduped.find((candidate) => {
+        const sameKey = (candidate.key || this.generateKey(candidate.value)) === (entry.key || this.generateKey(entry.value));
+        return sameKey || this.findSimilar([candidate], entry) !== null;
+      });
+
+      if (!similar) {
+        deduped.push(entry);
+        continue;
+      }
+
+      const merged = this.mergeEntries(similar, entry);
+      const idx = deduped.indexOf(similar);
+      deduped[idx] = merged;
+      mergedDuplicates.push({ kept: merged.key, mergedFrom: entry.id || entry.key });
+    }
+
+    store.entries = deduped;
+    this.saveStore(sessionId, store);
+    return { store, mergedDuplicates };
+  }
+
+  isAllowed(candidate) {
+    if (!candidate || typeof candidate !== 'object') {
+      return false;
+    }
+
+    const policies = this.policy;
+    if (policies.blockedTypes.includes(candidate.type)) {
+      return false;
+    }
+    if (candidate.source && !policies.allowedSources.includes(candidate.source)) {
+      return false;
+    }
+    if ((candidate.confidence ?? 0) < policies.minConfidence) {
+      return false;
+    }
+    return Boolean(candidate.value && String(candidate.value).trim());
+  }
+
+  summarizeActivity(activity = []) {
+    return activity
+      .slice(0, this.maxRecentActivity)
+      .map((entry) => ({
+        id: entry.id,
+        type: entry.type || 'activity',
+        summary: entry.summary || entry.value || '',
+        timestamp: entry.timestamp
+      }));
+  }
+
+  get policy() {
+    return this._policy || { ...DEFAULT_POLICY, minConfidence: this.confidenceThreshold };
+  }
+
+  set policy(nextPolicy) {
+    this._policy = {
+      ...DEFAULT_POLICY,
+      minConfidence: this.confidenceThreshold,
+      ...(nextPolicy || {}),
+      domainPriority: {
+        ...DEFAULT_POLICY.domainPriority,
+        ...(nextPolicy?.domainPriority || {})
+      },
+      expirationDays: {
+        ...DEFAULT_POLICY.expirationDays,
+        ...(nextPolicy?.expirationDays || {})
+      }
+    };
+  }
+
+  getBackgroundContext(sessionId) {
+    const store = this.loadStore(sessionId);
+    return {
+      identity: store.profiles.identity.slice(-3),
+      soul: store.profiles.soul.slice(-3),
+      recentActivity: this.summarizeActivity(store.recentActivity)
+    };
   }
 }
 

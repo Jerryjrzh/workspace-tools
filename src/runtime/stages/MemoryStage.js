@@ -8,10 +8,16 @@ export async function MemoryStage(ctx, next) {
 
   ctx.memoryManager = manager;
   ctx.memoryProvider = provider;
-  ctx.memory = sessionId ? manager.load(sessionId) : { entries: [] };
+  ctx.memory = sessionId ? manager.loadStore(sessionId) : manager.createEmptyStore();
+  ctx.memoryBackground = sessionId ? manager.getBackgroundContext(sessionId) : {
+    identity: [],
+    soul: [],
+    recentActivity: []
+  };
   ctx.session = ctx.session || {};
   ctx.session.memory = ctx.memory;
   ctx.session.memoryStore = ctx.memory;
+  ctx.session.memoryBackground = ctx.memoryBackground;
   return next();
 }
 

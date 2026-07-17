@@ -71,6 +71,7 @@ export async function handleMemoryTools(name, args, context) {
         key: args.key,
         value: args.value,
         type: args.type || 'fact',
+        domain: args.domain || 'session',
         confidence: 1,
         source: 'explicit'
       });
@@ -90,7 +91,8 @@ export async function handleMemoryTools(name, args, context) {
 
     case 'memory_search': {
       const entries = memoryManager.search(sessionId, args.query, {
-        limit: args.limit || 8
+        limit: args.limit || 8,
+        domain: args.domain
       });
       return {
         status: 'OK',

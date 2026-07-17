@@ -122,23 +122,52 @@ function extractConversationSummaries(ws, maxCount = 5) {
  * Session ID Flow:
  * LM Studio → conversation_id → SessionMiddleware → Context → Tool
  */
+function isPredictFetchFailure(err) {
+  const message = String(err?.message || err || '');
+  return /predict request failed|Failed to send message|fetch failed|networkerror|ECONNRESET|ETIMEDOUT|EAI_AGAIN/i.test(message);
+}
+
 async function handleTool(name, args, extra = {}) {
-  // Extract conversation ID from extra parameter
-  const convId = extra?.conversation_id || "default";
-  
-  // Use SessionMiddleware dispatch to handle layered architecture
-  const result = await SessionMiddleware.dispatch(name, args, convId);
-  
-  // If result contains context and toolArgs, we need to call the tool handler
-  if (result && result.context && result.toolArgs) {
-    // Get tool handler
-    if (toolHandlers[name]) {
-      return await toolHandlers[name](name, result.toolArgs, result.context);
+  const convId = extra?.conversation_id || 'default';
+  const retryable = isPredictFetchFailure;
+  const maxAttempts = retryable ? 2 : 1;
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      const result = await SessionMiddleware.dispatch(name, args, convId);
+
+      if (result && result.context && result.toolArgs) {
+        if (toolHandlers[name]) {
+          return await toolHandlers[name](name, result.toolArgs, result.context);
+        }
+      }
+
+      return result;
+    } catch (err) {
+      lastError = err;
+      if (attempt < maxAttempts && retryable(err)) {
+        await new Promise((resolve) => setTimeout(resolve, 250 * attempt));
+        continue;
+      }
+      break;
     }
   }
-  
-  // For bootstrap tools, return the result directly
-  return result;
+
+  const message = String(lastError?.message || lastError || 'Unknown error');
+  if (isPredictFetchFailure(lastError)) {
+    return {
+      content: [{
+        type: 'text',
+        text: `⚠️ 预测请求失败：${message}\n\n已触发降级策略：\n- 自动重试 1 次\n- 若仍失败，请缩短 system prompt / 关闭超长上下文 / 检查本地引擎可用性\n- 可切换到轻量 Bootstrap 模式继续运行`
+      }],
+      isError: true,
+      errorType: 'predict_fetch_failed',
+      retryable: true
+    };
+  }
+
+  throw lastError;
 }
 
 // Helper function to get workspace (backward compatibility)

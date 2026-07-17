@@ -32,6 +32,7 @@ const BOOTSTRAP_TOOLS = new Set([
   'session_start',
   'workspace_info',
   'load_global_rules',
+  'load_task_rules',
   'workspace_clear'
 ]);
 
@@ -244,13 +245,12 @@ export class SessionMiddleware {
    */
   static async handleSessionStart(args, sessionId) {
     const context = sessionContextManager.getOrCreateContext(sessionId);
-    
-    // Validate workspace exists
+
     if (!context.workspace) {
-      throw new Error('[SessionStart] Workspace not set. Please call workspace_set first.');
+      const fallbackWorkspace = workspaceManager.getWorkspaceForSession(sessionId) || workspaceManager.getWorkspace() || process.cwd();
+      context.workspace = fallbackWorkspace;
     }
-    
-    // Load conversation data
+
     const { conversationManager } = await import('../managers/conversation.js');
     let convData = { messages: [] };
     try {
@@ -258,33 +258,50 @@ export class SessionMiddleware {
     } catch (e) {
       console.warn(`[SessionStart] Failed to load conversation: ${e.message}`);
     }
-    
-    // Detect task type
+
     const detectedTask = conversationManager.detectTaskType(convData);
-    
-    // Load global rules
-    const rules = await ruleManager.loadGlobalRules();
-    
-    // Update context (READ-ONLY: doesn't modify workspace)
+    const globalRules = await ruleManager.loadGlobalRules();
+    const taskRules = await this.loadTaskRules(detectedTask, convData);
+
     context.task = detectedTask;
-    context.rules = rules;
+    context.rules = globalRules;
+    context.taskRules = taskRules;
     context.initialized = true;
-    
-    // Persist context
+
     await sessionContextPersistence.save(sessionId, context);
-    
+
     return {
       status: 'SESSION_READY',
       workspace: context.workspace,
       session_id: sessionId,
       active_task: context.task || 'none',
-      rules_loaded: rules.length,
+      rules_loaded: globalRules.length,
+      task_rules_loaded: taskRules.length,
       details: {
         message: '环境已就绪，可以开始执行工具调用。',
         conversation_snippet: conversationManager.extractConversationSummary(convData).userMessages.slice(0, 3),
-        global_rules_loaded: true
+        global_rules_loaded: true,
+        task_rules_loaded: taskRules.length > 0,
+        bootstrap_mode: 'compatible'
       }
     };
+  }
+
+  static async loadTaskRules(detectedTask, convData) {
+    const taskName = String(detectedTask || 'unknown');
+    const candidates = [
+      path.join(process.cwd(), 'doc', `${taskName}.md`),
+      path.join(process.cwd(), 'doc', `${taskName}.prompt.md`),
+      path.join(process.cwd(), 'doc', 'TASK.md')
+    ];
+
+    for (const candidate of candidates) {
+      if (fs.existsSync(candidate)) {
+        return [{ name: `task:${taskName}`, path: candidate }];
+      }
+    }
+
+    return [];
   }
 
   /**

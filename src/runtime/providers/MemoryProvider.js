@@ -23,21 +23,27 @@ export class MemoryProvider {
 
   load(sessionId) {
     if (!sessionId) {
-      return { entries: [] };
+      return { entries: [], profiles: { identity: [], soul: [] }, recentActivity: [] };
     }
 
     const filePath = this.getFilePath(sessionId);
     if (!fs.existsSync(filePath)) {
-      return { entries: [] };
+      return { entries: [], profiles: { identity: [], soul: [] }, recentActivity: [] };
     }
 
     try {
       const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
       return {
-        entries: Array.isArray(data.entries) ? data.entries : []
+        entries: Array.isArray(data.entries) ? data.entries : [],
+        profiles: {
+          identity: Array.isArray(data.profiles?.identity) ? data.profiles.identity : [],
+          soul: Array.isArray(data.profiles?.soul) ? data.profiles.soul : []
+        },
+        recentActivity: Array.isArray(data.recentActivity) ? data.recentActivity : [],
+        updatedAt: data.updatedAt || null
       };
     } catch {
-      return { entries: [] };
+      return { entries: [], profiles: { identity: [], soul: [] }, recentActivity: [] };
     }
   }
 
@@ -50,6 +56,11 @@ export class MemoryProvider {
     const filePath = this.getFilePath(sessionId);
     const payload = {
       entries: store.entries || [],
+      profiles: {
+        identity: Array.isArray(store.profiles?.identity) ? store.profiles.identity : [],
+        soul: Array.isArray(store.profiles?.soul) ? store.profiles.soul : []
+      },
+      recentActivity: Array.isArray(store.recentActivity) ? store.recentActivity : [],
       updatedAt: new Date().toISOString()
     };
     fs.writeFileSync(filePath, JSON.stringify(payload, null, 2), 'utf8');

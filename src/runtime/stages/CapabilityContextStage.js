@@ -5,6 +5,9 @@ export async function CapabilityContextStage(ctx, next) {
   const skills = ctx.skills || [];
   const allMemory = ctx.memory || { entries: [] };
   const retrievedMemory = ctx.retrievedMemory || [];
+  const identityMemory = ctx.retrievedIdentityMemory || [];
+  const soulMemory = ctx.retrievedSoulMemory || [];
+  const workingMemory = ctx.retrievedWorkingMemory || [];
 
   const promptContext = buildPromptContext(ctx);
 
@@ -12,8 +15,14 @@ export async function CapabilityContextStage(ctx, next) {
     ruleNames: rules.map((rule) => rule.name),
     skillNames: skills.map((skill) => skill.name || skill),
     memoryKeys: retrievedMemory.map((entry) => entry.key || entry),
+    identityKeys: identityMemory.map((entry) => entry.key || entry),
+    soulKeys: soulMemory.map((entry) => entry.key || entry),
+    workingKeys: workingMemory.map((entry) => entry.key || entry),
     allMemoryCount: allMemory.entries?.length || 0,
     retrievedMemoryCount: retrievedMemory.length,
+    identityMemoryCount: identityMemory.length,
+    soulMemoryCount: soulMemory.length,
+    workingMemoryCount: workingMemory.length,
     summary: `Loaded ${rules.length} rules, ${skills.length} skills, retrieved ${retrievedMemory.length}/${allMemory.entries?.length || 0} memory entries`
   };
 
@@ -28,7 +37,10 @@ export async function CapabilityContextStage(ctx, next) {
   ctx.session.promptContext = promptContext;
   ctx.session.memorySnapshot = {
     total: allMemory.entries?.length || 0,
-    retrieved: retrievedMemory.length
+    retrieved: retrievedMemory.length,
+    identity: identityMemory.length,
+    soul: soulMemory.length,
+    working: workingMemory.length
   };
   return next();
 }

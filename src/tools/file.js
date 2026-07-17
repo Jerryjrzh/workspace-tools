@@ -8,7 +8,7 @@ export const fileTools = [
   { name: 'file_read', description: '读取文件内容，支持行范围和多种读取模式(context/range/full)', inputSchema: { type: 'object', properties: { path: { type: 'string' }, start_line: { type: 'number' }, end_line: { type: 'number' }, mode: { type: 'string', enum: ['context', 'range', 'full'] } }, required: ['path'] } },
   { name: 'file_write', description: '写入文件（覆盖或创建）', inputSchema: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string' } }, required: ['path', 'content'] } },
   { name: 'file_append', description: '追加内容到文件末尾', inputSchema: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string' } }, required: ['path', 'content'] } },
-  { name: 'file_patch', description: '精确替换文件中的指定文本', inputSchema: { type: 'object', properties: { path: { type: 'string' }, old_str: { type: 'string' }, new_str: { type: 'string' }, mode: { type: 'string', enum: ['context'] }, line: { type: 'number' }, window: { type: 'number' }, operation: { type: 'string', enum: ['replace_line', 'insert_line', 'delete_lines', 'replace_lines'] }, content: { type: 'string' }, count: { type: 'number' } }, required: ['path'] } },
+  { name: 'file_patch', description: '精确替换文件中的指定文本，必要时自动进入编辑事务', inputSchema: { type: 'object', properties: { path: { type: 'string' }, old_str: { type: 'string' }, new_str: { type: 'string' }, mode: { type: 'string', enum: ['context', 'range'] }, line: { type: 'number' }, window: { type: 'number' }, operation: { type: 'string', enum: ['replace_line', 'insert_line', 'delete_lines', 'replace_lines'] }, content: { type: 'string' }, count: { type: 'number' } }, required: ['path'] } },
   { name: 'file_delete_lines', description: '删除文件中指定行范围', inputSchema: { type: 'object', properties: { path: { type: 'string' }, start_line: { type: 'number' }, end_line: { type: 'number' } }, required: ['path', 'start_line', 'end_line'] } },
   { name: 'file_rollback', description: '回滚文件到上一次修改前的状态', inputSchema: { type: 'object', properties: { path: { type: 'string' }, backup_path: { type: 'string' } }, required: ['path'] } },
   { name: 'edit_begin', description: '开始一个编辑事务', inputSchema: { type: 'object', properties: { path: { type: 'string' }, start_line: { type: 'number' }, end_line: { type: 'number' } }, required: ['path'] } },
@@ -34,8 +34,25 @@ export async function handleFileTools(name, args, context) {
         await safeWrite(filePath, existing + args.content + '\n', ws, args.content.split('\n').length);
         return `✅ 已追加内容到文件: ${filePath}`;
       }
-      case 'file_patch':
-        return `✅ file_patch 的执行逻辑已收束到 edit / safe write 执行层: ${filePath}`;
+      case 'file_patch': {
+        if (args.old_str !== undefined && args.new_str !== undefined) {
+          const existing = fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8') : '';
+          const next = args.count && args.count > 1 ? existing.split(args.old_str).join(args.new_str) : existing.replace(args.old_str, args.new_str);
+          await safeWrite(filePath, next, ws, null);
+          return `✅ 已通过文本替换完成 file_patch: ${filePath}`;
+        }
+
+        const buffer = beginEdit(filePath, {
+          ...args,
+          mode: args.mode || (args.line !== undefined ? 'context' : 'range'),
+          window: args.window || 200
+        });
+        if (args.content !== undefined) {
+          const replacements = Array.isArray(args.content) ? args.content : [];
+          return applyEdit(buffer.bufferId, replacements);
+        }
+        return buffer;
+      }
       case 'file_delete_lines': {
         if (!fs.existsSync(filePath)) throw new Error(`文件不存在: ${filePath}`);
         const lines = fs.readFileSync(filePath, 'utf8').split('\n');

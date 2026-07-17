@@ -41,6 +41,19 @@ function generateDiff(filePath, newContent, startLine, endLine) {
   return { changed: changes.length > 0, changes };
 }
 
+function normalizeRange(totalLines, startLine = 1, endLine = totalLines, windowSize = 200) {
+  const safeStart = Math.max(1, Number(startLine) || 1);
+  const safeEnd = Math.min(totalLines, Number(endLine) || totalLines);
+  if (safeEnd >= safeStart) {
+    return { startLine: safeStart, endLine: safeEnd };
+  }
+  const centered = Math.max(1, Math.min(totalLines, safeStart));
+  const half = Math.floor(windowSize / 2);
+  const computedStart = Math.max(1, centered - half);
+  const computedEnd = Math.min(totalLines, computedStart + windowSize - 1);
+  return { startLine: computedStart, endLine: computedEnd };
+}
+
 async function checkSyntax(language, content) {
   return { valid: true, language, length: content.length };
 }
@@ -51,7 +64,8 @@ function checkRemovedContent(originalLines, newLines) {
 }
 
 export function beginEdit(filePath, args = {}) {
-  const buffer = readFile(filePath, 'range', args);
+  const readMode = args.mode === 'context' || args.line !== undefined ? 'context' : 'range';
+  const buffer = readFile(filePath, readMode, { ...args, window: args.window || 200 });
   const bufferId = `edit_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
   bufferPool.set(bufferId, {
     path: filePath,
@@ -59,9 +73,19 @@ export function beginEdit(filePath, args = {}) {
     startLine: buffer.startLine,
     endLine: buffer.endLine,
     originalLines: buffer.totalLines,
-    createdAt: Date.now()
+    createdAt: Date.now(),
+    truncated: buffer.truncated === true,
+    readMode
   });
-  return { bufferId, path: filePath, startLine: buffer.startLine, endLine: buffer.endLine, totalLines: buffer.totalLines };
+  return {
+    bufferId,
+    path: filePath,
+    startLine: buffer.startLine,
+    endLine: buffer.endLine,
+    totalLines: buffer.totalLines,
+    truncated: buffer.truncated === true,
+    readMode
+  };
 }
 
 export function applyEdit(bufferId, replacements = []) {

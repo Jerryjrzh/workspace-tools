@@ -3,6 +3,7 @@ import path from 'path';
 
 const BACKUP_DIR = '.lmstudio-backups';
 const MAX_DIFF_LINES = 50;
+const DEFAULT_FULL_READ_LINE_LIMIT = 500;
 
 function ensureDir(dirPath) {
   if (!fs.existsSync(dirPath)) {
@@ -86,27 +87,46 @@ function readFile(filePath, mode = 'full', options = {}) {
   const content = fs.readFileSync(filePath, 'utf8');
   const lines = content.split('\n');
   const totalLines = lines.length;
+  const hasExplicitRange = options.start_line !== undefined || options.end_line !== undefined || options.line !== undefined;
+  const effectiveMode = mode || (hasExplicitRange ? 'range' : 'full');
 
   let startLine = 1;
   let endLine = totalLines;
+  let buffered = false;
 
-  if (mode === 'context' && options.line !== undefined) {
-    const target = Math.max(0, Math.min(totalLines - 1, options.line - 1));
-    const windowSize = options.window || 100;
+  if (effectiveMode === 'context' && options.line !== undefined) {
+    const target = Math.max(0, Math.min(totalLines - 1, Number(options.line) - 1));
+    const windowSize = Math.max(1, Number(options.window) || DEFAULT_FULL_READ_LINE_LIMIT);
     const half = Math.floor(windowSize / 2);
     startLine = Math.max(1, target - half + 1);
     endLine = Math.min(totalLines, startLine + windowSize - 1);
-  } else if (mode === 'range' || (options.start_line !== undefined && options.end_line !== undefined)) {
-    startLine = Math.max(1, options.start_line || 1);
-    endLine = Math.min(totalLines, options.end_line || totalLines);
+    buffered = true;
+  } else if (effectiveMode === 'range' || hasExplicitRange) {
+    startLine = Math.max(1, Number(options.start_line) || 1);
+    endLine = Math.min(totalLines, Number(options.end_line) || totalLines);
+    buffered = true;
+  } else if (effectiveMode === 'full') {
+    if (totalLines > DEFAULT_FULL_READ_LINE_LIMIT) {
+      endLine = DEFAULT_FULL_READ_LINE_LIMIT;
+      buffered = true;
+    }
   }
 
   const rangeContent = lines.slice(startLine - 1, endLine).join('\n');
-  if (mode === 'full') {
-    return rangeContent;
+  if (!buffered && effectiveMode === 'full') {
+    return { content: rangeContent, totalLines, truncated: false, mode: 'full' };
   }
 
-  return { bufferId: `buf_${Date.now()}`, path: filePath, startLine, endLine, totalLines, content: rangeContent };
+  return {
+    bufferId: `buf_${Date.now()}`,
+    path: filePath,
+    startLine,
+    endLine,
+    totalLines,
+    content: rangeContent,
+    truncated: endLine < totalLines,
+    mode: effectiveMode
+  };
 }
 
 export { BACKUP_DIR, MAX_DIFF_LINES, safeWrite, readFile, backupFileBeforePatch };

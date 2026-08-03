@@ -93,7 +93,10 @@ export const sessionTools = [
   }
 ];
 
-export async function handleSessionTools(name, args, convId) {
+export async function handleSessionTools(name, args, context) {
+  const convId = (typeof context === 'object' && context !== null)
+    ? (context.sessionId || context.conversation_id || 'default')
+    : (context || 'default');
   switch (name) {
     case "ssh_session": {
       try {

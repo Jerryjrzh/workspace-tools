@@ -31,7 +31,10 @@ export const reviewTools = [
   }
 ];
 
-export async function handleReviewTools(name, args, convId) {
+export async function handleReviewTools(name, args, context) {
+  const convId = (typeof context === 'object' && context !== null)
+    ? (context.sessionId || context.conversation_id || 'default')
+    : (context || 'default');
   const ws = typeof convId === 'string' && convId ? undefined : process.cwd(); // Simplified for now
   
   switch (name) {

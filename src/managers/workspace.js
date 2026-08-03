@@ -20,10 +20,15 @@ class WorkspaceManager {
     }
   }
 
-  // Single Source of Truth: currentWorkspace for legacy compatibility only
-  // Session workspace is now stored in SessionContext
+  // Legacy/global workspace. Prefer the in-memory value, but fall back to the persisted
+  // globalLast so a new session (or server restart) can resume the previous workspace.
   getWorkspace() {
-    return this.currentWorkspace || null;
+    if (this.currentWorkspace) return this.currentWorkspace;
+    try {
+      const state = JSON.parse(fs.readFileSync(STATE_DB, 'utf8'));
+      if (state.globalLast && fs.existsSync(state.globalLast)) return state.globalLast;
+    } catch (e) {}
+    return null;
   }
 
   // Set current workspace for legacy compatibility (not session-specific)
@@ -66,22 +71,17 @@ class WorkspaceManager {
 
   getWorkspaceForSession(sessionId) {
     this.ensureStateFile();
-    
-    // Try to load state
-    let state = {};
+
     try {
-      state = JSON.parse(fs.readFileSync(STATE_DB, 'utf8'));
+      const state = JSON.parse(fs.readFileSync(STATE_DB, 'utf8'));
+      if (state.sessions && state.sessions[sessionId]) {
+        return state.sessions[sessionId].workspace;
+      }
     } catch (e) {
       return null;
     }
-    
-    // Check session-specific workspace first
-    if (state.sessions && state.sessions[sessionId]) {
-      return state.sessions[sessionId].workspace;
-    }
-    
-    // Fall back to global last
-    return state.globalLast || null;
+
+    return null;
   }
 
   _loadState() {

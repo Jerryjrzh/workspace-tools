@@ -19,7 +19,7 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprot
 import { workspaceManager } from "./src/managers/workspace.js";
 import { handleSessionStart } from "./src/managers/session.js";
 import { ruleManager } from "./src/managers/rules.js";
-import { SessionMiddleware } from "./src/middleware/sessionMiddleware.js";
+import { dispatch as runtimeDispatch } from "./src/dispatcher.js";
 import { ALL_TOOLS, toolHandlers } from "./src/tools/index.js";
 
 // Import additional tools that are still in server.js for now
@@ -129,24 +129,16 @@ function isPredictFetchFailure(err) {
 
 async function handleTool(name, args, extra = {}) {
   const convId = extra?.conversation_id || 'default';
-  const retryable = isPredictFetchFailure;
-  const maxAttempts = retryable ? 2 : 1;
+  // Only network/predict-fetch failures are retryable; other errors must not be silently retried.
   let lastError = null;
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
     try {
-      const result = await SessionMiddleware.dispatch(name, args, convId);
-
-      if (result && result.context && result.toolArgs) {
-        if (toolHandlers[name]) {
-          return await toolHandlers[name](name, result.toolArgs, result.context);
-        }
-      }
-
+      const result = await runtimeDispatch({ name, args: args || {}, conversationId: convId });
       return result;
     } catch (err) {
       lastError = err;
-      if (attempt < maxAttempts && retryable(err)) {
+      if (attempt < 2 && isPredictFetchFailure(err)) {
         await new Promise((resolve) => setTimeout(resolve, 250 * attempt));
         continue;
       }
@@ -189,10 +181,30 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
   const { name, arguments: args } = request.params;
   try {
     const result = await handleTool(name, args || {}, extra);
-    // 必须增加类型判断，强制标准化
-    const standardizedText = typeof result === 'object' ? JSON.stringify(result, null, 2) : String(result);
-    
-    return { content: [{ type: "text", text: standardizedText }] };
+    if (result && typeof result === 'object') {
+      const structuredContent = structuredClone(result);
+      const textBlocks = [];
+      if (typeof structuredContent.content === 'string') {
+        textBlocks.push(structuredContent.content);
+        structuredContent.content_in_text_block = true;
+        delete structuredContent.content;
+      }
+      if (typeof structuredContent.nearestMatch?.content === 'string') {
+        textBlocks.push(structuredContent.nearestMatch.content);
+        structuredContent.nearestMatch.content_in_text_block = true;
+        delete structuredContent.nearestMatch.content;
+      }
+
+      // Metadata must be visible in the ordinary text channel because some MCP clients
+      // discard structuredContent. Source excerpts use separate blocks and stay single-encoded.
+      const content = [{ type: 'text', text: JSON.stringify(structuredContent, null, 2) }];
+      content.push(...textBlocks.map((text) => ({ type: 'text', text })));
+      // LM Studio's legacy tools bridge accepts the core MCP content/isError shape only.
+      // Returning structuredContent without an advertised output schema can terminate the
+      // provider connection instead of reporting a validation error.
+      return { content, isError: result.ok === false };
+    }
+    return { content: [{ type: 'text', text: String(result) }] };
   } catch (err) {
     // In a real implementation, we would log the error here
     return { content: [{ type: "text", text: `❌ ${err.message}` }], isError: true };
@@ -204,6 +216,6 @@ await server.connect(transport);
 
 // Log that server has started
 console.error(`🚀 LM Studio Workspace Tools MCP Server v2.1.0 已启动`);
-console.error(`📁 三层架构已启用（Bootstrap/Context Ready/Business Tool）`);
-console.error(`🔄 分层调用已启用，解决 session_start/workspace_set 互锁问题`);
-console.error(`✅ SessionMiddleware 已实现单向状态流`);
+console.error(`📁 Runtime Pipeline 已启用（Dispatcher → Stages → Tool）`);
+console.error(`🔄 Bootstrap 工具直通，Business 工具经完整 stage pipeline`);
+console.error(`✅ dispatcher.dispatch() 为唯一请求入口`);

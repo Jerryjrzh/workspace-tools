@@ -34,7 +34,10 @@ export const envTools = [
   }
 ];
 
-export async function handleEnvTools(name, args, convId) {
+export async function handleEnvTools(name, args, context) {
+  const convId = (typeof context === 'object' && context !== null)
+    ? (context.sessionId || context.conversation_id || 'default')
+    : (context || 'default');
   switch (name) {
     case "env_check": {
       try {

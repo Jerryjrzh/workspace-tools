@@ -66,16 +66,46 @@ function calculateDiffLines(oldContent, newContent) {
 
 async function runCompileCheck(filePath) {
   const ext = path.extname(filePath).toLowerCase();
-  if (!['.js', '.mjs', '.cjs', '.ts'].includes(ext)) {
-    return;
-  }
-
   const { execFile } = await import('child_process');
-  if (['.js', '.mjs'].includes(ext)) {
-    return new Promise((resolve, reject) => {
-      execFile('node', ['--check', filePath], { timeout: 10000 }, (err) => (err ? reject(err) : resolve()));
+  const execCheck = (command, args) => new Promise((resolve, reject) => {
+    execFile(command, args, { timeout: 15000 }, (err, stdout, stderr) => {
+      if (!err) {
+        resolve({ checked: true, command });
+        return;
+      }
+      err.command = command;
+      err.output = stderr || stdout || err.message;
+      reject(err);
     });
+  });
+
+  if (['.js', '.mjs', '.cjs'].includes(ext)) {
+    return execCheck(process.execPath, ['--check', filePath]);
   }
+  if (ext === '.py') {
+    const unavailableCommands = [];
+    for (const pythonCmd of ['python3', 'python']) {
+      try {
+        return await execCheck(pythonCmd, ['-m', 'py_compile', filePath]);
+      } catch (error) {
+        if (error.code === 'ENOENT') {
+          unavailableCommands.push(pythonCmd);
+          continue;
+        }
+        const validationError = new Error(error.output || error.message);
+        validationError.code = 'SYNTAX_CHECK_FAILED';
+        validationError.cause = error;
+        throw validationError;
+      }
+    }
+    return {
+      checked: false,
+      skipped: true,
+      reason: 'validator_unavailable',
+      unavailableCommands
+    };
+  }
+  return { checked: false, skipped: true, reason: 'unsupported_extension' };
 }
 
 async function safeWrite(filePath, newContent, workspace, options = {}) {
@@ -100,8 +130,9 @@ async function safeWrite(filePath, newContent, workspace, options = {}) {
   fs.writeFileSync(tempPath, newContent, 'utf8');
   fs.renameSync(tempPath, filePath);
 
+  let compileValidation;
   try {
-    await runCompileCheck(filePath);
+    compileValidation = await runCompileCheck(filePath);
   } catch (error) {
     if (backupPath && fs.existsSync(backupPath)) fs.copyFileSync(backupPath, filePath);
     throw error;
@@ -124,7 +155,14 @@ async function safeWrite(filePath, newContent, workspace, options = {}) {
     hashBefore,
     hashAfter,
     expectedDiffSize: normalizedOptions.expectedDiffSize ?? null,
-    validation: { writeVerified: true, syntaxChecked: ['.js', '.mjs', '.cjs', '.ts'].includes(path.extname(filePath).toLowerCase()), syntaxOk: true },
+    validation: {
+      writeVerified: true,
+      syntaxChecked: compileValidation?.checked === true,
+      syntaxOk: compileValidation?.checked === true ? true : null,
+      syntaxCheckSkipped: compileValidation?.skipped === true,
+      syntaxCheckReason: compileValidation?.reason || null,
+      unavailableValidators: compileValidation?.unavailableCommands || []
+    },
     nextAction: 'none',
     rereadRequired: false
   };
@@ -144,6 +182,7 @@ function readFile(filePath, mode = 'full', options = {}) {
   let startLine = 1;
   let endLine = totalLines;
   let buffered = false;
+  let clampedRange = null;
 
   if (effectiveMode === 'context' && options.line !== undefined) {
     const target = Math.max(0, Math.min(totalLines - 1, Number(options.line) - 1));
@@ -153,8 +192,35 @@ function readFile(filePath, mode = 'full', options = {}) {
     endLine = Math.min(totalLines, startLine + windowSize - 1);
     buffered = true;
   } else if (effectiveMode === 'range' || hasExplicitRange) {
-    startLine = Math.max(1, Number(options.start_line) || 1);
-    endLine = Math.min(totalLines, Number(options.end_line) || totalLines);
+    const requestedStart = Number(options.start_line) || 1;
+    const requestedEnd = Number(options.end_line) || totalLines;
+
+    // Clamp out-of-bounds ranges instead of returning an empty slice. A start beyond the
+    // file end (or a reversed range) previously produced startLine > endLine with no content,
+    // which callers interpreted as a failed read.
+    if (requestedStart > totalLines || requestedEnd < 1) {
+      clampedRange = { requested: { start_line: options.start_line, end_line: options.end_line }, resolved: null };
+      return {
+        ok: false,
+        status: 'out_of_bounds',
+        operation: 'file_read',
+        path: filePath,
+        totalLines,
+        errorCode: 'RANGE_OUT_OF_BOUNDS',
+        requestedRange: { start_line: options.start_line, end_line: options.end_line },
+        clampedRange: null,
+        nextAction: 'correct_range',
+        guidance: `请求的行范围 ${requestedStart}-${requestedEnd} 超出文件范围（共 ${totalLines} 行）。请使用 ≤ ${totalLines} 的 start_line/end_line，或改用 mode=full / context。`
+      };
+    }
+
+    const clampedStart = Math.max(1, requestedStart);
+    const clampedEnd = Math.min(totalLines, requestedEnd);
+    if (clampedStart !== requestedStart || clampedEnd !== requestedEnd) {
+      clampedRange = { requested: { start_line: options.start_line, end_line: options.end_line }, resolved: { start_line: clampedStart, end_line: clampedEnd } };
+    }
+    startLine = Math.min(clampedStart, totalLines);
+    endLine = Math.max(Math.min(clampedEnd, totalLines), 1);
     buffered = true;
   } else if (effectiveMode === 'full') {
     if (totalLines > DEFAULT_FULL_READ_LINE_LIMIT) {
@@ -177,8 +243,9 @@ function readFile(filePath, mode = 'full', options = {}) {
     content: rangeContent,
     truncated,
     nextStartLine: truncated ? endLine + 1 : null,
+    clampedRange,
     mode: effectiveMode,
-    nextAction: truncated ? 'continue_or_target' : 'none'
+    nextAction: truncated ? 'continue_or_target' : (clampedRange ? 'range_clamped' : 'none')
   };
 }
 

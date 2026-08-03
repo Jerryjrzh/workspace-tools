@@ -10,6 +10,11 @@ export async function CapabilityContextStage(ctx, next) {
   const workingMemory = ctx.retrievedWorkingMemory || [];
 
   const promptContext = buildPromptContext(ctx);
+  const backgroundOrder = ctx.memory?.policies?.backgroundOrder || ['identity', 'soul', 'working', 'session'];
+  const backgroundCounts = backgroundOrder.reduce((acc, domain) => {
+    acc[domain] = (ctx.memoryBackground?.[domain] || []).length;
+    return acc;
+  }, {});
 
   ctx.capabilities = {
     ruleNames: rules.map((rule) => rule.name),
@@ -23,13 +28,15 @@ export async function CapabilityContextStage(ctx, next) {
     identityMemoryCount: identityMemory.length,
     soulMemoryCount: soulMemory.length,
     workingMemoryCount: workingMemory.length,
+    backgroundCounts,
     summary: `Loaded ${rules.length} rules, ${skills.length} skills, retrieved ${retrievedMemory.length}/${allMemory.entries?.length || 0} memory entries`
   };
 
   ctx.promptContext = promptContext;
   ctx.executionHints = {
     summary: `rules=${ctx.capabilities.ruleNames.join(',')};skills=${ctx.capabilities.skillNames.join(',')};memory=${ctx.capabilities.memoryKeys.join(',')}`,
-    systemPrompt: promptContext.systemPrompt || ''
+    systemPrompt: promptContext.systemPrompt || '',
+    backgroundOrder
   };
 
   ctx.session = ctx.session || {};

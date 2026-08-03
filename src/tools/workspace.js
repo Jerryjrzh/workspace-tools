@@ -6,8 +6,10 @@ export const workspaceTools = [
   { name: 'workspace_info', description: '显示当前会话工作区路径及最近使用历史', inputSchema: { type: 'object', properties: { subpath: { type: 'string' }, all: { type: 'boolean' } } } }
 ];
 
-export async function handleWorkspaceTools(name, args, convId) {
-  const sessionId = convId || 'default';
+export async function handleWorkspaceTools(name, args, context) {
+  const sessionId = (typeof context === 'object' && context !== null)
+    ? (context.sessionId || context.conversation_id || 'default')
+    : (context || 'default');
   switch (name) {
     case 'workspace_set':
       return setSessionWorkspace(sessionId, args.path);

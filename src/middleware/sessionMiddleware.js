@@ -152,15 +152,10 @@ export class SessionMiddleware {
    */
   static async executeBusiness(toolName, args, conversationId) {
     const context = await this.getContextForTool(toolName, args, conversationId);
-    
-    // Inject context into args
-    const toolArgs = {
-      ...args,
-      context
-    };
-    
-    // Return context for tool handler to use
-    return { context, toolArgs };
+
+    // Keep runtime context out of tool arguments. Besides bloating every response when a
+    // handler is missing, injecting rules here can copy thousands of irrelevant tokens.
+    return { context, toolArgs: args };
   }
 
   /**
@@ -189,15 +184,52 @@ export class SessionMiddleware {
       console.warn(`[SessionMiddleware] Failed to load context from persistence: ${e.message}`);
     }
     
-    // Step 5: If loaded from persistence, update memory cache
+    // Step 5: If loaded from persistence, restore it into the memory cache.
+    // Creating an empty context here used to discard the persisted workspace
+    // after a server restart, making tools fall back to another session's path.
     if (context) {
-      sessionContextManager.getOrCreateContext(sessionId);
-      context = sessionContextManager.getContext(sessionId);
+      context = sessionContextManager.restoreContext(sessionId, context);
       return this.buildFullContext(sessionId, context);
     }
     
-    // Step 6: If context doesn't exist, throw error
-    throw new Error(`[SessionMiddleware] Session context not found for session ${sessionId}. Please call session_start first.`);
+    // Step 6: Transparently bootstrap on the first business call. Bootstrap is an
+    // internal lifecycle concern; models should not need to retry with session_start.
+    context = await this.autoBootstrap(sessionId, args);
+    return this.buildFullContext(sessionId, context);
+  }
+
+  static async autoBootstrap(sessionId, args = {}) {
+    const context = sessionContextManager.getOrCreateContext(sessionId);
+    const { conversationManager } = await import('../managers/conversation.js');
+
+    let convData = { messages: [] };
+    try {
+      convData = await conversationManager.loadConversation(sessionId);
+    } catch (e) {
+      console.warn(`[SessionBootstrap] Conversation unavailable: ${e.message}`);
+    }
+
+    const persistedWorkspace = workspaceManager.getWorkspaceForSession(sessionId);
+    const inferredWorkspace = conversationManager.detectWorkspace(convData, args.path);
+    const globalWorkspace = workspaceManager.getWorkspace();
+    const candidates = [persistedWorkspace, inferredWorkspace, globalWorkspace]
+      .filter((candidate) => candidate && fs.existsSync(candidate));
+
+    // Never silently select the MCP installation directory merely because it is cwd.
+    const workspace = candidates[0] || (args.path && path.isAbsolute(args.path)
+      ? path.dirname(args.path)
+      : process.cwd());
+
+    context.workspace = workspace;
+    context.task = conversationManager.detectTaskType(convData);
+    context.rules = await ruleManager.loadGlobalRules();
+    context.taskRules = await this.loadTaskRules(context.task, convData, workspace);
+    context.initialized = true;
+    context.bootstrapMode = 'transparent';
+
+    workspaceManager.setSessionWorkspace(sessionId, workspace);
+    await sessionContextPersistence.save(sessionId, context);
+    return context;
   }
 
   /**
@@ -261,7 +293,7 @@ export class SessionMiddleware {
 
     const detectedTask = conversationManager.detectTaskType(convData);
     const globalRules = await ruleManager.loadGlobalRules();
-    const taskRules = await this.loadTaskRules(detectedTask, convData);
+    const taskRules = await this.loadTaskRules(detectedTask, convData, context.workspace);
 
     context.task = detectedTask;
     context.rules = globalRules;
@@ -287,12 +319,12 @@ export class SessionMiddleware {
     };
   }
 
-  static async loadTaskRules(detectedTask, convData) {
+  static async loadTaskRules(detectedTask, convData, workspace = process.cwd()) {
     const taskName = String(detectedTask || 'unknown');
     const candidates = [
-      path.join(process.cwd(), 'doc', `${taskName}.md`),
-      path.join(process.cwd(), 'doc', `${taskName}.prompt.md`),
-      path.join(process.cwd(), 'doc', 'TASK.md')
+      path.join(workspace, 'doc', `${taskName}.md`),
+      path.join(workspace, 'doc', `${taskName}.prompt.md`),
+      path.join(workspace, 'doc', 'TASK.md')
     ];
 
     for (const candidate of candidates) {

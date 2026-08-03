@@ -141,7 +141,10 @@ export const tmuxTools = [
   }
 ];
 
-export async function handleTmuxTools(name, args, convId) {
+export async function handleTmuxTools(name, args, context) {
+  const convId = (typeof context === 'object' && context !== null)
+    ? (context.sessionId || context.conversation_id || 'default')
+    : (context || 'default');
   switch (name) {
     case "tmux_run": {
       try {

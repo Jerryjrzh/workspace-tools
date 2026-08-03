@@ -17,7 +17,20 @@ const DEFAULT_POLICY = {
     occupation: 730,
     project_status: 180,
     preference: null,
-    fact: null
+    fact: null,
+    instruction: null
+  },
+  backgroundLimit: {
+    identity: 3,
+    soul: 3,
+    working: 5,
+    session: 5
+  },
+  conflictResolution: 'prefer_higher_confidence_then_priority',
+  backgroundOrder: ['identity', 'soul', 'working', 'session'],
+  expirationActions: {
+    softDaysBeforeExpiry: 30,
+    archiveLimit: 50
   }
 };
 
@@ -72,6 +85,9 @@ export class MemoryManager {
         ...DEFAULT_POLICY,
         minConfidence: this.confidenceThreshold
       },
+      expiredEntries: [],
+      softExpiredEntries: [],
+      conflicts: [],
       updatedAt: new Date().toISOString()
     };
   }
@@ -87,6 +103,9 @@ export class MemoryManager {
         soul: Array.isArray(store.profiles?.soul) ? store.profiles.soul : []
       },
       recentActivity: Array.isArray(store.recentActivity) ? store.recentActivity : [],
+      expiredEntries: Array.isArray(store.expiredEntries) ? store.expiredEntries : [],
+      softExpiredEntries: Array.isArray(store.softExpiredEntries) ? store.softExpiredEntries : [],
+      conflicts: Array.isArray(store.conflicts) ? store.conflicts : [],
       policies: {
         ...base.policies,
         ...(store.policies || {})
@@ -154,7 +173,10 @@ export class MemoryManager {
     if (!existingValue || !candidateValue) {
       return false;
     }
-    return existingValue !== candidateValue;
+    if (existingValue === candidateValue) {
+      return false;
+    }
+    return existing.type === candidate.type || existing.key === candidate.key;
   }
 
   mergeValues(existingValue, candidateValue) {
@@ -176,18 +198,54 @@ export class MemoryManager {
     const mergedDomain = this.getDomainPriority(incoming.domain) >= this.getDomainPriority(existing.domain)
       ? incoming.domain
       : existing.domain;
+    const confidence = Math.max(existing.confidence || 0, incoming.confidence || 0);
     return {
       ...existing,
       ...incoming,
       domain: mergedDomain,
       value: this.mergeValues(existing.value, incoming.value),
-      confidence: Math.max(existing.confidence || 0, incoming.confidence || 0),
+      confidence,
+      priority: Math.max(existing.priority || 0, this.getDomainPriority(mergedDomain)),
       updatedAt: new Date().toISOString()
     };
   }
 
+  applyExpiration(store) {
+    const now = Date.now();
+    const retained = [];
+    const expiredEntries = [...store.expiredEntries];
+    const softExpiredEntries = [...store.softExpiredEntries];
+    const softWindowDays = store.policies.expirationActions?.softDaysBeforeExpiry ?? 30;
+
+    for (const entry of store.entries) {
+      const ttlDays = store.policies.expirationDays?.[entry.type];
+      if (!ttlDays) {
+        retained.push(entry);
+        continue;
+      }
+
+      const ageMs = now - new Date(entry.updatedAt || entry.createdAt || now).getTime();
+      const maxAgeMs = ttlDays * 24 * 60 * 60 * 1000;
+      const softAgeMs = Math.max(0, maxAgeMs - softWindowDays * 24 * 60 * 60 * 1000);
+
+      if (ageMs > maxAgeMs) {
+        expiredEntries.push({ ...entry, expiredAt: new Date().toISOString() });
+      } else {
+        if (ageMs > softAgeMs) {
+          softExpiredEntries.push({ ...entry, softExpiredAt: new Date().toISOString() });
+        }
+        retained.push(entry);
+      }
+    }
+
+    store.entries = retained;
+    store.expiredEntries = expiredEntries.slice(-50);
+    store.softExpiredEntries = softExpiredEntries.slice(-50);
+    return store;
+  }
+
   upsertEntry(sessionId, input = {}) {
-    const store = this.loadStore(sessionId);
+    const store = this.applyExpiration(this.loadStore(sessionId));
     const entries = [...store.entries];
     const key = input.key || this.generateKey(input.value);
     const existingIndex = entries.findIndex((entry) => entry.key === key);
@@ -199,6 +257,7 @@ export class MemoryManager {
       domain: this.normalizeDomain(input.domain || 'session'),
       confidence: input.confidence ?? 1,
       source: input.source || 'explicit',
+      priority: input.priority ?? this.getDomainPriority(input.domain || 'session'),
       createdAt: existingIndex >= 0 ? entries[existingIndex].createdAt : new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
@@ -223,24 +282,33 @@ export class MemoryManager {
     return this.upsertEntry(sessionId, { ...input, domain });
   }
 
-  forget(sessionId, keyOrId) {
+  forget(sessionId, keyOrId, options = {}) {
     const store = this.loadStore(sessionId);
     const entryCountBefore = store.entries.length;
-    store.entries = store.entries.filter(
-      (entry) => entry.key !== keyOrId && entry.id !== keyOrId
-    );
+    const removedEntries = [];
+
+    store.entries = store.entries.filter((entry) => {
+      const shouldRemove = entry.key === keyOrId || entry.id === keyOrId;
+      if (shouldRemove) removedEntries.push({ ...entry, removedAt: new Date().toISOString(), reason: options.reason || 'explicit_forget' });
+      return !shouldRemove;
+    });
 
     for (const domain of ['identity', 'soul']) {
-      store.profiles[domain] = store.profiles[domain].filter(
-        (entry) => entry.key !== keyOrId && entry.id !== keyOrId
-      );
+      store.profiles[domain] = store.profiles[domain].filter((entry) => {
+        const shouldRemove = entry.key === keyOrId || entry.id === keyOrId;
+        if (shouldRemove) removedEntries.push({ ...entry, removedAt: new Date().toISOString(), reason: options.reason || 'explicit_forget' });
+        return !shouldRemove;
+      });
     }
 
-    const removed = entryCountBefore !== store.entries.length;
+    const removed = entryCountBefore !== store.entries.length || removedEntries.length > 0;
     if (removed) {
-      this.saveStore(sessionId, store);
+      this.saveStore(sessionId, {
+        ...store,
+        expiredEntries: [...store.expiredEntries, ...removedEntries].slice(-50)
+      });
     }
-    return { removed };
+    return { removed, removedEntries };
   }
 
   update(sessionId, key, updates = {}) {
@@ -274,6 +342,7 @@ export class MemoryManager {
       domain,
       confidence: input.confidence ?? 1,
       source: input.source || 'explicit',
+      priority: input.priority ?? this.getDomainPriority(domain),
       createdAt: existingIndex >= 0 ? profile[existingIndex].createdAt : new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
@@ -304,11 +373,26 @@ export class MemoryManager {
       return this.remember(sessionId, candidate);
     }
 
+    if (this.isConflict(similar, candidate)) {
+      const conflict = {
+        id: this.generateId(),
+        existing: similar,
+        candidate,
+        createdAt: new Date().toISOString(),
+        resolution: this.policy.conflictResolution,
+        status: 'needs_confirmation'
+      };
+      store.conflicts = [...store.conflicts, conflict].slice(-50);
+      this.saveStore(sessionId, store);
+      return { action: 'conflict', conflict };
+    }
+
     return this.update(sessionId, similar.key, {
       value: this.mergeValues(similar.value, candidate.value),
       confidence: Math.max(similar.confidence || 0, candidate.confidence || 0),
       type: candidate.type || similar.type,
-      source: candidate.source || similar.source
+      source: candidate.source || similar.source,
+      priority: Math.max(similar.priority || 0, this.getDomainPriority(candidate.domain || similar.domain))
     });
   }
 
@@ -324,12 +408,12 @@ export class MemoryManager {
 
     const domain = this.normalizeDomain(candidate.domain || 'session');
     if (domain === 'identity') {
-      const entry = this.updateIdentity(sessionId, { ...candidate, domain });
-      return { action: 'identity', entry, candidate };
+      const current = this.updateIdentity(sessionId, { ...candidate, domain });
+      return { action: 'identity', entry: current, candidate };
     }
     if (domain === 'soul') {
-      const entry = this.updateSoul(sessionId, { ...candidate, domain });
-      return { action: 'soul', entry, candidate };
+      const current = this.updateSoul(sessionId, { ...candidate, domain });
+      return { action: 'soul', entry: current, candidate };
     }
 
     const store = this.loadStore(sessionId);
@@ -340,13 +424,17 @@ export class MemoryManager {
     }
 
     if (this.isConflict(similar, candidate)) {
-      const entry = this.update(sessionId, similar.key, {
-        value: candidate.value,
-        confidence: Math.max(similar.confidence || 0, candidate.confidence || 0),
-        type: candidate.type || similar.type,
-        source: candidate.source || 'extracted'
-      });
-      return { action: 'update', entry, candidate };
+      const conflict = {
+        id: this.generateId(),
+        existing: similar,
+        candidate,
+        createdAt: new Date().toISOString(),
+        resolution: this.policy.conflictResolution,
+        status: 'needs_confirmation'
+      };
+      store.conflicts = [...store.conflicts, conflict].slice(-50);
+      this.saveStore(sessionId, store);
+      return { action: 'conflict', conflict, candidate, nextAction: 'confirm_with_user' };
     }
 
     const entry = this.merge(sessionId, candidate);
@@ -362,7 +450,11 @@ export class MemoryManager {
     if (!query.trim()) {
       return entries
         .slice()
-        .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)))
+        .sort((a, b) => {
+          const priorityDelta = (b.priority || 0) - (a.priority || 0);
+          if (priorityDelta !== 0) return priorityDelta;
+          return String(b.updatedAt).localeCompare(String(a.updatedAt));
+        })
         .slice(0, limit);
     }
 
@@ -376,6 +468,8 @@ export class MemoryManager {
             score += 1;
           }
         }
+        score += (entry.priority || 0) * 0.1;
+        score += Math.min((entry.confidence || 0) / 10, 0.2);
         return { entry, score };
       })
       .filter((item) => item.score > 0)
@@ -416,7 +510,11 @@ export class MemoryManager {
       const merged = this.mergeEntries(similar, entry);
       const idx = deduped.indexOf(similar);
       deduped[idx] = merged;
-      mergedDuplicates.push({ kept: merged.key, mergedFrom: entry.id || entry.key });
+      mergedDuplicates.push({
+        kept: merged.key,
+        mergedFrom: entry.id || entry.key,
+        resolution: store.policies.conflictResolution
+      });
     }
 
     store.entries = deduped;
@@ -475,9 +573,27 @@ export class MemoryManager {
 
   getBackgroundContext(sessionId) {
     const store = this.loadStore(sessionId);
+    const limits = store.policies.backgroundLimit || DEFAULT_POLICY.backgroundLimit;
+    const ordered = this.policy.backgroundOrder || DEFAULT_POLICY.backgroundOrder;
+    const result = {};
+
+    for (const domain of ordered) {
+      if (domain === 'identity') {
+        result.identity = store.profiles.identity.slice(-limits.identity);
+        continue;
+      }
+      if (domain === 'soul') {
+        result.soul = store.profiles.soul.slice(-limits.soul);
+        continue;
+      }
+      result[domain] = store.entries
+        .filter((entry) => entry.domain === domain)
+        .sort((a, b) => (b.priority || 0) - (a.priority || 0) || String(b.updatedAt).localeCompare(String(a.updatedAt)))
+        .slice(0, limits[domain] || 3);
+    }
+
     return {
-      identity: store.profiles.identity.slice(-3),
-      soul: store.profiles.soul.slice(-3),
+      ...result,
       recentActivity: this.summarizeActivity(store.recentActivity)
     };
   }

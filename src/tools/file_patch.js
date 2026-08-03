@@ -13,29 +13,35 @@ import {
   nearestMatch
 } from './file.js';
 
+function buildNextAction(nextAction = 'locate', nextArgs = null, guidance = null) {
+  return { nextAction, nextArgs, guidance };
+}
+
 function failure(status, errorCode, message, extra = {}) {
+  const nextAction = extra.nextAction || 'locate';
+  const nextArgs = extra.nextArgs || null;
+  const guidance = extra.guidance || 'Stop retrying this patch blindly. Re-read the target range or run locate with more context.';
   return {
     ok: false,
     status,
     errorCode,
     error: message,
-    nextAction: extra.nextAction || 'locate',
-    nextArgs: extra.nextArgs || null,
-    guidance: extra.guidance || 'Stop retrying this patch blindly. Re-read the target range or run locate with more context.',
+    ...buildNextAction(nextAction, nextArgs, guidance),
     ...extra
   };
 }
 
 function success(operation, filePath, message, extra = {}) {
+  const nextAction = extra.nextAction || 'none';
+  const nextArgs = extra.nextArgs || null;
+  const guidance = extra.guidance || null;
   return {
     ok: true,
     status: 'applied',
     operation,
     path: filePath,
     message,
-    nextAction: extra.nextAction || 'none',
-    nextArgs: extra.nextArgs || null,
-    guidance: extra.guidance || null,
+    ...buildNextAction(nextAction, nextArgs, guidance),
     ...extra
   };
 }
@@ -121,7 +127,8 @@ export async function file_patch(ctx, args) {
         if (!args.line) {
           return failure('rejected', 'MISSING_LINE', '替换行需要指定 line 参数', {
             path: filePath,
-            nextAction: 'locate',
+            nextAction: 'edit_begin',
+            nextArgs: { path: filePath },
             guidance: 'Provide the exact target line number before retrying.'
           });
         }
@@ -129,7 +136,8 @@ export async function file_patch(ctx, args) {
         if (lineIndex >= lines.length) {
           return failure('rejected', 'LINE_OUT_OF_RANGE', `行号超出范围: ${args.line}，文件只有 ${lines.length} 行`, {
             path: filePath,
-            nextAction: 'locate',
+            nextAction: 'edit_begin',
+            nextArgs: { path: filePath },
             guidance: `Read the file again and pick a line between 1 and ${lines.length}.`
           });
         }
@@ -154,7 +162,8 @@ export async function file_patch(ctx, args) {
         if (!args.line) {
           return failure('rejected', 'MISSING_LINE', '插入行需要指定 line 参数', {
             path: filePath,
-            nextAction: 'locate',
+            nextAction: 'edit_begin',
+            nextArgs: { path: filePath },
             guidance: 'Provide the exact insert position before retrying.'
           });
         }
@@ -162,7 +171,8 @@ export async function file_patch(ctx, args) {
         if (lineIndex > lines.length) {
           return failure('rejected', 'LINE_OUT_OF_RANGE', `行号超出范围: ${args.line}，文件只有 ${lines.length} 行`, {
             path: filePath,
-            nextAction: 'locate'
+            nextAction: 'edit_begin',
+            nextArgs: { path: filePath }
           });
         }
         lines.splice(lineIndex, 0, args.content || '');
@@ -182,7 +192,8 @@ export async function file_patch(ctx, args) {
         if (!args.line) {
           return failure('rejected', 'MISSING_LINE', '删除行需要指定 line 参数', {
             path: filePath,
-            nextAction: 'locate'
+            nextAction: 'edit_begin',
+            nextArgs: { path: filePath }
           });
         }
         const startLine = Math.max(Number(args.line), 1) - 1;
@@ -190,7 +201,8 @@ export async function file_patch(ctx, args) {
         if (startLine >= lines.length) {
           return failure('rejected', 'LINE_OUT_OF_RANGE', `行号超出范围: ${args.line}，文件只有 ${lines.length} 行`, {
             path: filePath,
-            nextAction: 'locate'
+            nextAction: 'edit_begin',
+            nextArgs: { path: filePath }
           });
         }
         const deletedContent = lines.splice(startLine, deleteCount);
@@ -210,7 +222,8 @@ export async function file_patch(ctx, args) {
         if (!args.line) {
           return failure('rejected', 'MISSING_LINE', '替换行范围需要指定 line 参数', {
             path: filePath,
-            nextAction: 'locate'
+            nextAction: 'edit_begin',
+            nextArgs: { path: filePath }
           });
         }
         const startLine = Math.max(Number(args.line), 1) - 1;
@@ -218,7 +231,8 @@ export async function file_patch(ctx, args) {
         if (startLine >= lines.length) {
           return failure('rejected', 'LINE_OUT_OF_RANGE', `行号超出范围: ${args.line}，文件只有 ${lines.length} 行`, {
             path: filePath,
-            nextAction: 'locate'
+            nextAction: 'edit_begin',
+            nextArgs: { path: filePath }
           });
         }
         const newLines = Array.isArray(args.content) ? args.content.map(String) : [String(args.content || '')];

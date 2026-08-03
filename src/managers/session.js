@@ -5,7 +5,6 @@ import os from 'os';
 import { conversationManager } from './conversation.js';
 import { sessionContextManager } from './sessionContext.js';
 import { SessionResolver } from './sessionResolver.js';
-import { SessionMiddleware } from '../middleware/sessionMiddleware.js';
 import { workspaceManager } from './workspace.js';
 import { ruleManager } from './rules.js';
 
@@ -32,21 +31,21 @@ export async function handleSessionStart(args, passedConvId) {
   }
 
   const detectedTask = conversationManager.detectTaskType(convData);
+  // Resume the previous session's workspace when this is a fresh conversation: prefer the
+  // in-memory context, then per-session persistence, then the persisted globalLast.
   const workspaceFromContext = context.workspace || workspaceManager.getWorkspaceForSession(sessionId) || workspaceManager.getWorkspace() || process.cwd();
+  const normalizedWorkspace = workspaceFromContext ? path.resolve(workspaceFromContext) : process.cwd();
   const rules = await ruleManager.loadGlobalRules();
 
-  context.workspace = workspaceFromContext;
+  context.workspace = normalizedWorkspace;
+  workspaceManager.setSessionWorkspace(sessionId, normalizedWorkspace);
   context.task = detectedTask;
   context.rules = rules;
   context.initialized = true;
 
-  await SessionMiddleware.updateContext(sessionId, {
-    workspace: context.workspace,
-    task: context.task,
-    rules: context.rules,
-    initialized: context.initialized
-  });
-
+  // Runtime pipeline reads session state from the in-memory SessionContext and per-session
+  // workspace persistence (workspaceManager). Do not write middleware-specific files here —
+  // that would create a second, divergent source of truth for the same session.
   const currentWs = context.workspace || '⚠️ 未设置';
 
   try {

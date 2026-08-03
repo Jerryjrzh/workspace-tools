@@ -38,7 +38,10 @@ export const contextTools = [
   }
 ];
 
-export async function handleContextTools(name, args, convId) {
+export async function handleContextTools(name, args, context) {
+  const convId = (typeof context === 'object' && context !== null)
+    ? (context.sessionId || context.conversation_id || 'default')
+    : (context || 'default');
   const ws = typeof convId === 'string' && convId ? undefined : process.cwd(); // Simplified for now
   const logPath = path.join(ws || process.cwd(), '.lmstudio-workspace.json');
   

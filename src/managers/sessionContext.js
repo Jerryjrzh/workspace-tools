@@ -43,6 +43,16 @@ class SessionContextManager {
   }
 
   /**
+   * Restore a persisted context into the in-memory cache without replacing
+   * the session identity or requiring callers to mutate internal state.
+   */
+  restoreContext(sessionId, persistedContext = {}) {
+    const context = this.getOrCreateContext(sessionId);
+    Object.assign(context, persistedContext, { id: sessionId });
+    return context;
+  }
+
+  /**
    * Check if a session context exists
    */
   hasContext(sessionId) {

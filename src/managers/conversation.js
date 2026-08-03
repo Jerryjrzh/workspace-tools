@@ -53,6 +53,32 @@ class ConversationManager {
     };
   }
 
+  detectWorkspace(convData, requestedPath = null) {
+    const texts = [];
+    const visit = (value) => {
+      if (typeof value === 'string') texts.push(value);
+      else if (Array.isArray(value)) value.forEach(visit);
+      else if (value && typeof value === 'object') Object.values(value).forEach(visit);
+    };
+    visit(convData?.messages || []);
+
+    const candidates = [];
+    for (const text of texts) {
+      const explicit = text.match(/(?:workspace|工作区|当前workspace)\s*(?:在|为|[:=])?\s*(\/[\w.@+~/-]+)/gi) || [];
+      for (const match of explicit) {
+        const absolute = match.match(/\/[\w.@+~/-]+/);
+        if (absolute) candidates.push(absolute[0].replace(/[.,;，。；]+$/, ''));
+      }
+    }
+
+    if (requestedPath && !path.isAbsolute(requestedPath)) {
+      for (const candidate of candidates) {
+        if (fs.existsSync(path.resolve(candidate, requestedPath))) return candidate;
+      }
+    }
+    return candidates.find((candidate) => fs.existsSync(candidate)) || null;
+  }
+
   /**
    * Detect task type from conversation content
    */

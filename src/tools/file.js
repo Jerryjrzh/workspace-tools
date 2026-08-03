@@ -3,6 +3,14 @@ import path from 'path';
 import fs from 'fs';
 import { MAX_TRANSACTION_DIFF_LINES, calculateLineDiff, safeWrite, readFile } from '../runtime/executors/fileExecutor.js';
 import { beginEdit, applyEdit, reviewEdit, commitEdit, cancelEdit } from '../runtime/executors/editExecutor.js';
+import {
+  transportEscapeCandidates,
+  matchingTransportCandidate,
+  nearestMatch,
+  countMatches,
+  countNormalizedMatches,
+  findFuzzyBlock
+} from '../utils/textMatch.js';
 
 const recentReads = new Map();
 const MAX_READ_CACHE_ENTRIES = 200;
@@ -34,52 +42,92 @@ export const fileTools = [
   { name: 'edit_cancel', description: '取消 edit_begin 创建的编辑会话', inputSchema: { type: 'object', properties: { buffer_id: { type: 'string' } }, required: ['buffer_id'] } }
 ];
 
-function transportEscapeCandidates(value) {
-  const text = String(value);
-  const candidates = [];
-  const add = (candidate) => {
-    if (candidate !== text && !candidates.includes(candidate)) candidates.push(candidate);
-  };
-
-  add(text.replace(/\\+(?=["'])/g, ''));
-  add(text
-    .replace(/\\+r\\+n/g, '\n')
-    .replace(/\\+n/g, '\n')
-    .replace(/\\+r/g, '\r')
-    .replace(/\\+t/g, '\t')
-    .replace(/\\+(?=["'])/g, ''));
-  return candidates;
+function applyTextReplacement(existing, oldText, newText, requestedCount = 1) {
+  let remaining = requestedCount;
+  return existing.replaceAll(oldText, (match) => (remaining-- > 0 ? newText : match));
 }
 
-function matchingTransportCandidate(content, target) {
-  for (const candidate of transportEscapeCandidates(target)) {
-    const matchCount = countMatches(content, candidate);
-    if (matchCount > 0) return { candidate, matchCount };
+function resolveTextMatch(existing, oldStr, newStr, requestedCount = 1) {
+  let effectiveOldStr = oldStr;
+  let effectiveNewStr = newStr;
+  let normalizedTransportEscapes = false;
+  let fuzzyMatched = false;
+  let matchCount = countMatches(existing, effectiveOldStr);
+
+  if (matchCount === 0) {
+    const normalizedMatch = matchingTransportCandidate(existing, effectiveOldStr);
+    if (normalizedMatch) {
+      effectiveOldStr = normalizedMatch.candidate;
+      matchCount = normalizedMatch.matchCount;
+      normalizedTransportEscapes = true;
+    }
   }
-  return null;
-}
 
-function countMatches(content, target) {
-  return target.length === 0 ? 0 : content.split(target).length - 1;
-}
+  if (matchCount === 0) {
+    matchCount = countNormalizedMatches(existing, effectiveOldStr);
+    if (matchCount > 0) {
+      const fileLines = existing.split('\n');
+      const oldLines = effectiveOldStr.split('\n');
+      const blockSize = oldLines.length;
+      let replaced = 0;
+      const rebuilt = [];
+      for (let i = 0; i < fileLines.length;) {
+        const block = fileLines.slice(i, i + blockSize).join('\n');
+        if (blockSize > 0 && countNormalizedMatches(block, effectiveOldStr) === 1 && replaced < requestedCount) {
+          rebuilt.push(...effectiveNewStr.split('\n'));
+          i += blockSize;
+          replaced++;
+        } else {
+          rebuilt.push(fileLines[i]);
+          i++;
+        }
+      }
+      if (replaced > 0) {
+        return {
+          next: rebuilt.join('\n'),
+          matchCount: replaced,
+          normalizedTransportEscapes,
+          fuzzyMatched: false,
+          normalizedWhitespace: true
+        };
+      }
+    }
+  }
 
-function nearestMatch(existing, target, window = 3) {
-  const lines = existing.split('\n');
-  const targetLines = String(target).trim().split('\n').map((line) => line.trim()).filter(Boolean);
-  const significantLines = targetLines.filter((line) => line.length >= 12);
-  const tokens = [...new Set(significantLines.join(' ').match(/[A-Za-z_]\w{3,}/g) || [])];
-  let best = { score: 0, index: -1 };
-  lines.forEach((line, index) => {
-    const block = lines.slice(index, index + Math.max(targetLines.length, 1)).join('\n');
-    const lineHits = significantLines.reduce((total, needle) => total + (block.includes(needle) ? 8 : 0), 0);
-    const tokenHits = tokens.reduce((total, token) => total + (block.includes(token) ? 1 : 0), 0);
-    const score = lineHits + tokenHits;
-    if (score > best.score) best = { score, index };
-  });
-  if (best.index < 0 || best.score === 0) return null;
-  const start = Math.max(0, best.index - window);
-  const end = Math.min(lines.length, best.index + Math.max(targetLines.length, 1) + window);
-  return { line: best.index + 1, startLine: start + 1, endLine: end, content: lines.slice(start, end).join('\n') };
+  if (matchCount === 0) {
+    const fuzzy = findFuzzyBlock(existing, effectiveOldStr);
+    if (fuzzy && !fuzzy.ambiguous) {
+      const before = existing.slice(0, existing.indexOf(fuzzy.matchedText));
+      const after = existing.slice(existing.indexOf(fuzzy.matchedText) + fuzzy.matchedText.length);
+      return {
+        next: before + effectiveNewStr + after,
+        matchCount: 1,
+        normalizedTransportEscapes,
+        fuzzyMatched: true,
+        fuzzyScore: fuzzy.score,
+        fuzzyRange: { start_line: fuzzy.startLine, end_line: fuzzy.endLine }
+      };
+    }
+    if (fuzzy?.ambiguous) {
+      return {
+        matchCount: 0,
+        fuzzyAmbiguous: true,
+        fuzzyCandidates: fuzzy.candidates
+      };
+    }
+    return { matchCount: 0 };
+  }
+
+  if (normalizedTransportEscapes) {
+    effectiveNewStr = transportEscapeCandidates(newStr).at(-1) || newStr;
+  }
+
+  return {
+    next: applyTextReplacement(existing, effectiveOldStr, effectiveNewStr, requestedCount),
+    matchCount,
+    normalizedTransportEscapes,
+    fuzzyMatched
+  };
 }
 
 export async function handleFileTools(name, args, context) {
@@ -130,38 +178,45 @@ export async function handleFileTools(name, args, context) {
           next = lines.join('\n');
         } else if (args.old_str !== undefined && args.new_str !== undefined) {
           if (args.old_str.length === 0) return { ok: false, status: 'rejected', errorCode: 'EMPTY_MATCH', nextAction: 'provide_unique_match' };
-          let effectiveOldStr = args.old_str;
-          let normalizedTransportEscapes = false;
-          matchCount = countMatches(existing, effectiveOldStr);
-          if (matchCount === 0) {
-            const normalizedMatch = matchingTransportCandidate(existing, effectiveOldStr);
-            if (normalizedMatch) {
-              effectiveOldStr = normalizedMatch.candidate;
-              matchCount = normalizedMatch.matchCount;
-              normalizedTransportEscapes = true;
-            }
-          }
           const requestedCount = Number(args.count) || 1;
+          const resolved = resolveTextMatch(existing, args.old_str, args.new_str, requestedCount);
+          matchCount = resolved.matchCount ?? 0;
+
+          if (resolved.fuzzyAmbiguous) {
+            return {
+              ok: false,
+              status: 'ambiguous',
+              errorCode: 'FUZZY_MATCH_AMBIGUOUS',
+              matchCount: 0,
+              fuzzyCandidates: resolved.fuzzyCandidates,
+              nextAction: 'edit_begin',
+              guidance: 'Multiple similar blocks found. Use edit_begin with one of the suggested ranges instead of retrying the same patch.'
+            };
+          }
+
           if (matchCount === 0) {
             const nearestTarget = transportEscapeCandidates(args.old_str).at(-1) || args.old_str;
             const nearest = nearestMatch(existing, nearestTarget);
+            const fuzzy = findFuzzyBlock(existing, nearestTarget);
             return {
               ok: false,
               status: 'not_found',
               errorCode: 'MATCH_NOT_FOUND',
               matchCount,
-              nextAction: nearest ? 'edit_begin' : 'locate',
-              nextArgsMode: nearest ? 'range' : 'search',
-              nextArgs: nearest ? { path: filePath, start_line: nearest.startLine, end_line: nearest.endLine } : null,
+              nextAction: nearest || (fuzzy && !fuzzy.ambiguous) ? 'edit_begin' : 'locate',
+              nextArgsMode: nearest || (fuzzy && !fuzzy.ambiguous) ? 'range' : 'search',
+              nextArgs: nearest ? { path: filePath, start_line: nearest.startLine, end_line: nearest.endLine } : (fuzzy && !fuzzy.ambiguous ? { path: filePath, start_line: fuzzy.startLine, end_line: fuzzy.endLine } : null),
               rereadRequired: false,
               nearestMatch: nearest,
-              suggestedRange: nearest ? { start_line: nearest.startLine, end_line: nearest.endLine } : null,
-              guidance: nearest
+              fuzzyMatch: fuzzy && !fuzzy.ambiguous ? fuzzy : null,
+              suggestedRange: nearest ? { start_line: nearest.startLine, end_line: nearest.endLine } : (fuzzy && !fuzzy.ambiguous ? { start_line: fuzzy.startLine, end_line: fuzzy.endLine } : null),
+              guidance: nearest || (fuzzy && !fuzzy.ambiguous)
                 ? 'Call edit_begin exactly once with nextArgs, then copy its nextArgs.buffer_id exactly into edit_apply. Do not retry escaped old_str.'
                 : 'Use locate or file_search to find the symbol before editing.'
             };
           }
           if (!args.count && matchCount !== 1) {
+            const effectiveOldStr = matchingTransportCandidate(existing, args.old_str)?.candidate || args.old_str;
             const occurrenceLines = [];
             let searchFrom = 0;
             while (occurrenceLines.length < 20) {
@@ -183,12 +238,12 @@ export async function handleFileTools(name, args, context) {
               fallbackAllowed: true
             };
           }
-          let remaining = Math.min(requestedCount, matchCount);
-          const effectiveNewStr = normalizedTransportEscapes
-            ? (transportEscapeCandidates(args.new_str).at(-1) || args.new_str)
-            : args.new_str;
-          next = existing.replaceAll(effectiveOldStr, (match) => remaining-- > 0 ? effectiveNewStr : match);
-          args._normalizedTransportEscapes = normalizedTransportEscapes;
+          next = resolved.next;
+          args._normalizedTransportEscapes = resolved.normalizedTransportEscapes === true;
+          args._fuzzyMatched = resolved.fuzzyMatched === true;
+          args._fuzzyScore = resolved.fuzzyScore ?? null;
+          args._fuzzyRange = resolved.fuzzyRange ?? null;
+          args._normalizedWhitespace = resolved.normalizedWhitespace === true;
         } else {
           return { ok: false, status: 'rejected', errorCode: 'INVALID_PATCH', nextAction: 'provide_operation_or_text_replacement' };
         }
@@ -203,6 +258,10 @@ export async function handleFileTools(name, args, context) {
           operation: args.operation || 'text_replace',
           matchCount,
           normalizedTransportEscapes: args._normalizedTransportEscapes === true,
+          fuzzyMatched: args._fuzzyMatched === true,
+          fuzzyScore: args._fuzzyScore ?? undefined,
+          fuzzyRange: args._fuzzyRange ?? undefined,
+          normalizedWhitespace: args._normalizedWhitespace === true,
           safetyMode: diff.changedLines > 50 ? 'verified_large_patch' : 'standard_patch',
           fallbackAllowed: true
         };

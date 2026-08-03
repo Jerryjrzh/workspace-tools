@@ -79,7 +79,10 @@ export const taskTools = [
   }
 ];
 
-export async function handleTaskTools(name, args, convId) {
+export async function handleTaskTools(name, args, context) {
+  const convId = (typeof context === 'object' && context !== null)
+    ? (context.sessionId || context.conversation_id || 'default')
+    : (context || 'default');
   // Use workspace from context or fallback to global
   const ws = typeof convId === 'string' && convId ? undefined : process.cwd(); // Simplified for now
   

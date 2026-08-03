@@ -13,6 +13,7 @@ import { tmuxTools } from './tmux.js';
 import { sessionTools } from './session.js';
 import { envTools } from './env.js';
 import { memoryTools } from './memory.js';
+import { searchTools } from './search.js';
 
 import { handleWorkspaceTools } from './workspace.js';
 import { handleFileTools } from './file.js';
@@ -27,6 +28,7 @@ import { handleTmuxTools } from './tmux.js';
 import { handleSessionTools } from './session.js';
 import { handleEnvTools } from './env.js';
 import { handleMemoryTools } from './memory.js';
+import { handleSearchTools } from './search.js';
 
 /**
  * Route tool calls to appropriate handlers based on tool name
@@ -43,6 +45,17 @@ export const toolHandlers = {
   file_append: handleFileTools,
   file_patch: handleFileTools,
   file_delete_lines: handleFileTools,
+  file_rollback: handleFileTools,
+  edit_begin: handleFileTools,
+  edit_apply: handleFileTools,
+  edit_review: handleFileTools,
+  edit_commit: handleFileTools,
+  edit_cancel: handleFileTools,
+
+  // Search tools
+  locate: handleSearchTools,
+  file_search: handleSearchTools,
+  glob_search: handleSearchTools,
   
   // Git tools
   git_status: handleGitTools,
@@ -107,6 +120,7 @@ export const toolHandlers = {
 export const ALL_TOOLS = [
   ...workspaceTools,
   ...fileTools,
+  ...searchTools,
   ...gitTools,
   ...shellTools,
   ...taskTools,

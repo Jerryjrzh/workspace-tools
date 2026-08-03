@@ -6,7 +6,8 @@ export function buildPromptContext(ctx) {
   const identityMemory = ctx.memoryBackground?.identity || [];
   const soulMemory = ctx.memoryBackground?.soul || [];
   const recentActivity = ctx.memoryBackground?.recentActivity || [];
-  const workingMemory = ctx.retrievedWorkingMemory || [];
+  const workingMemory = ctx.memoryBackground?.working || ctx.retrievedWorkingMemory || [];
+  const sessionMemory = ctx.memoryBackground?.session || [];
 
   const sections = [];
 
@@ -69,6 +70,14 @@ export function buildPromptContext(ctx) {
       name: 'Working Memory',
       tag: 'working-memory',
       content: workingMemory.map((entry) => `- [${entry.type || 'fact'}] ${entry.value}`).join('\n')
+    });
+  }
+
+  if (sessionMemory.length > 0) {
+    sections.push({
+      name: 'Session Memory',
+      tag: 'session-memory',
+      content: sessionMemory.map((entry) => `- [${entry.type || 'fact'}] ${entry.value}`).join('\n')
     });
   }
 

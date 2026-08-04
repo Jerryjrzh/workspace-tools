@@ -46,11 +46,6 @@ export const toolHandlers = {
   file_patch: handleFileTools,
   file_delete_lines: handleFileTools,
   file_rollback: handleFileTools,
-  edit_begin: handleFileTools,
-  edit_apply: handleFileTools,
-  edit_review: handleFileTools,
-  edit_commit: handleFileTools,
-  edit_cancel: handleFileTools,
 
   // Search tools
   locate: handleSearchTools,

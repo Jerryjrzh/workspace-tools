@@ -2,7 +2,6 @@ import { ToolMiddleware } from '../utils/middleware.js';
 import path from 'path';
 import fs from 'fs';
 import { MAX_TRANSACTION_DIFF_LINES, calculateLineDiff, safeWrite, readFile } from '../runtime/executors/fileExecutor.js';
-import { beginEdit, applyEdit, reviewEdit, commitEdit, cancelEdit } from '../runtime/executors/editExecutor.js';
 import {
   transportEscapeCandidates,
   matchingTransportCandidate,
@@ -32,14 +31,9 @@ export const fileTools = [
   { name: 'file_read', description: '读取文件。默认 full 最多 500 行；range 使用 start_line/end_line；context 使用 line/window。返回覆盖范围、截断状态和续读位置。', inputSchema: { type: 'object', properties: { path: { type: 'string' }, start_line: { type: 'number' }, end_line: { type: 'number' }, line: { type: 'number' }, window: { type: 'number' }, mode: { type: 'string', enum: ['context', 'range', 'full'] } }, required: ['path'] } },
   { name: 'file_write', description: '写入新文件或显式覆盖文件；修改现有文件优先使用 file_patch 或编辑事务。', inputSchema: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string' } }, required: ['path', 'content'] } },
   { name: 'file_append', description: '追加内容到文件末尾', inputSchema: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string' } }, required: ['path', 'content'] } },
-  { name: 'file_patch', description: '小范围精确修改。old_str/new_str 使用源码原文，不要手工添加 JSON 反斜杠或字面量\\n；工具会兼容误传的引号与换行转义。MATCH_NOT_FOUND 后必须按 nextAction 调用 edit_begin，禁止重复同一补丁；MATCH_NOT_UNIQUE 按 occurrence_lines 选择行操作。', inputSchema: { type: 'object', properties: { path: { type: 'string' }, old_str: { type: 'string', description: 'Literal source text, with ordinary quote characters; do not add transport escaping.' }, new_str: { type: 'string', description: 'Literal replacement source text; do not add transport escaping.' }, mode: { type: 'string', enum: ['context', 'range'] }, line: { type: 'number' }, window: { type: 'number' }, operation: { type: 'string', enum: ['replace_line', 'insert_line', 'delete_lines', 'replace_lines'] }, content: { oneOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }] }, count: { type: 'number' } }, required: ['path'] } },
+  { name: 'file_patch', description: '小范围精确修改。old_str/new_str 使用源码原文，不要手工添加 JSON 反斜杠或字面量\\n；工具会兼容误传的引号与换行转义。MATCH_NOT_FOUND 后须按 nextAction 重读目标范围再用行级操作（replace_lines/insert_line），禁止重复同一补丁；MATCH_NOT_UNIQUE 按 occurrence_lines 选择行操作。', inputSchema: { type: 'object', properties: { path: { type: 'string' }, old_str: { type: 'string', description: 'Literal source text, with ordinary quote characters; do not add transport escaping.' }, new_str: { type: 'string', description: 'Literal replacement source text; do not add transport escaping.' }, mode: { type: 'string', enum: ['context', 'range'] }, line: { type: 'number' }, window: { type: 'number' }, operation: { type: 'string', enum: ['replace_line', 'insert_line', 'delete_lines', 'replace_lines'] }, content: { oneOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }] }, count: { type: 'number' } }, required: ['path'] } },
   { name: 'file_delete_lines', description: '删除文件中指定行范围', inputSchema: { type: 'object', properties: { path: { type: 'string' }, start_line: { type: 'number' }, end_line: { type: 'number' } }, required: ['path', 'start_line', 'end_line'] } },
   { name: 'file_rollback', description: '回滚文件到上一次修改前的状态', inputSchema: { type: 'object', properties: { path: { type: 'string' }, backup_path: { type: 'string' } }, required: ['path'] } },
-  { name: 'edit_begin', description: '开始范围编辑事务。返回 metadata 中的 buffer_id 和 nextArgs；后续必须原样复制该 buffer_id，禁止猜测 edit_buffer_1、eb1、b1 等别名。源码位于独立 text 内容中。', inputSchema: { type: 'object', properties: { path: { type: 'string' }, start_line: { type: 'number' }, end_line: { type: 'number' } }, required: ['path'] } },
-  { name: 'edit_apply', description: '对 buffer 批量应用行替换。buffer_id 必须逐字符复制 edit_begin 返回的 nextArgs.buffer_id；replacements 的 line 是相对 buffer 的 1-based 行号。', inputSchema: { type: 'object', properties: { buffer_id: { type: 'string', description: 'Exact opaque ID from edit_begin.nextArgs.buffer_id; never abbreviate or invent.' }, replacements: { type: 'array', items: { type: 'object', properties: { line: { type: 'number' }, new_content: { type: 'string' } }, required: ['line', 'new_content'] } } }, required: ['buffer_id', 'replacements'] } },
-  { name: 'edit_review', description: '审查 edit_begin 创建的 buffer', inputSchema: { type: 'object', properties: { buffer_id: { type: 'string' }, language: { type: 'string' } }, required: ['buffer_id'] } },
-  { name: 'edit_commit', description: '提交 edit_begin 创建的 buffer', inputSchema: { type: 'object', properties: { buffer_id: { type: 'string' } }, required: ['buffer_id'] } },
-  { name: 'edit_cancel', description: '取消 edit_begin 创建的编辑会话', inputSchema: { type: 'object', properties: { buffer_id: { type: 'string' } }, required: ['buffer_id'] } }
 ];
 
 function applyTextReplacement(existing, oldText, newText, requestedCount = 1) {
@@ -133,8 +127,7 @@ function resolveTextMatch(existing, oldStr, newStr, requestedCount = 1) {
 export async function handleFileTools(name, args, context) {
   return ToolMiddleware.executeWithMiddleware(async (toolName, toolArgs, runtimeContext) => {
     const ws = runtimeContext.workspace || process.cwd();
-    const pathlessEditTools = new Set(['edit_apply', 'edit_review', 'edit_commit', 'edit_cancel']);
-    const filePath = pathlessEditTools.has(toolName) ? null : path.resolve(ws, args.path);
+    const filePath = path.resolve(ws, args.path);
 
     switch (toolName) {
       case 'file_read':
@@ -155,7 +148,11 @@ export async function handleFileTools(name, args, context) {
       }
       case 'file_append': {
         const existing = fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8') : '';
-        await safeWrite(filePath, existing + args.content + '\n', ws, args.content.split('\n').length);
+        // append 只增不减、不触碰已有内容，豁免 diff 规模限制（否则超过 MAX_DIFF_LINES=50 必然 PATCH_TOO_LARGE）
+        await safeWrite(filePath, existing + args.content + '\n', ws, {
+          expectedDiffSize: args.content.split('\n').length,
+          maxDiffLines: Number.POSITIVE_INFINITY
+        });
         return `✅ 已追加内容到文件: ${filePath}`;
       }
       case 'file_patch': {
@@ -189,8 +186,8 @@ export async function handleFileTools(name, args, context) {
               errorCode: 'FUZZY_MATCH_AMBIGUOUS',
               matchCount: 0,
               fuzzyCandidates: resolved.fuzzyCandidates,
-              nextAction: 'edit_begin',
-              guidance: 'Multiple similar blocks found. Use edit_begin with one of the suggested ranges instead of retrying the same patch.'
+              nextAction: 'file_read_range',
+              guidance: 'Multiple similar blocks found. Re-read the target range, then use file_patch with a line-based operation (replace_lines/insert_line) instead of retrying the same patch.'
             };
           }
 
@@ -203,7 +200,7 @@ export async function handleFileTools(name, args, context) {
               status: 'not_found',
               errorCode: 'MATCH_NOT_FOUND',
               matchCount,
-              nextAction: nearest || (fuzzy && !fuzzy.ambiguous) ? 'edit_begin' : 'locate',
+              nextAction: nearest || (fuzzy && !fuzzy.ambiguous) ? 'file_read_range' : 'locate',
               nextArgsMode: nearest || (fuzzy && !fuzzy.ambiguous) ? 'range' : 'search',
               nextArgs: nearest ? { path: filePath, start_line: nearest.startLine, end_line: nearest.endLine } : (fuzzy && !fuzzy.ambiguous ? { path: filePath, start_line: fuzzy.startLine, end_line: fuzzy.endLine } : null),
               rereadRequired: false,
@@ -211,7 +208,7 @@ export async function handleFileTools(name, args, context) {
               fuzzyMatch: fuzzy && !fuzzy.ambiguous ? fuzzy : null,
               suggestedRange: nearest ? { start_line: nearest.startLine, end_line: nearest.endLine } : (fuzzy && !fuzzy.ambiguous ? { start_line: fuzzy.startLine, end_line: fuzzy.endLine } : null),
               guidance: nearest || (fuzzy && !fuzzy.ambiguous)
-                ? 'Call edit_begin exactly once with nextArgs, then copy its nextArgs.buffer_id exactly into edit_apply. Do not retry escaped old_str.'
+                ? 'Re-read the suggested range with file_read, then use file_patch with a line-based operation on that exact region. Do not retry escaped old_str.'
                 : 'Use locate or file_search to find the symbol before editing.'
             };
           }
@@ -277,16 +274,6 @@ export async function handleFileTools(name, args, context) {
       }
       case 'file_rollback':
         return `✅ 回滚入口已收束到 executor 层: ${filePath}`;
-      case 'edit_begin':
-        return beginEdit(filePath, args);
-      case 'edit_apply':
-        return applyEdit(args.buffer_id, args.replacements || []);
-      case 'edit_review':
-        return reviewEdit(args.buffer_id, args.language || null);
-      case 'edit_commit':
-        return commitEdit(args.buffer_id, ws);
-      case 'edit_cancel':
-        return cancelEdit(args.buffer_id);
       default:
         throw new Error(`未知文件工具: ${name}`);
     }

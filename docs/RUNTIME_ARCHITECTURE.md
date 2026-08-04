@@ -1,297 +1,186 @@
-# Runtime Architecture v2
+# Runtime Architecture v2.1
+
+> 更新：2026-08-04
+> 依据：`NEXT_STEPS_v2.1.md` P3-L3「更新 RUNTIME_ARCHITECTURE.md」
+> 本文档描述当前真实架构（stage-pipeline + dispatcher），取代旧的 harness 文档。
 
 ## Overview
 
-This document describes the new runtime architecture implemented in workspace-tools, addressing the issues identified in `review_gpt7.md`.
-
-## Architecture Layers
+workspace-tools 已从"工具集合"演进为 **Agent Runtime**。核心是
+Dispatcher → AgentRuntime(stage pipeline) → Tool Executor，所有状态通过单一
+`RuntimeContext` 契约流动（见 `docs/CONTEXT_CONTRACT.md`）。
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                        USER REQUEST                                  │
-└─────────────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────────────┐
+│                        USER REQUEST (tool call)                            │
+└───────────────────────────────────────────────────────────────────────────┘
                                     ↓
-┌─────────────────────────────────────────────────────────────────────┐
-│                    RUNTIME HARNESS (orchestrator)                   │
-│  ┌──────────┬──────────┬──────────┬──────────┬─────────────────┐   │
-│  │ Planner  │ Budget   │ Retry    │ Prompt   │ Specialized     │   │
-│  │          │ Manager  │ Policy   │ Cache    │ Tools         │   │
-│  └──────────┴──────────┴──────────┴──────────┴─────────────────┘   │
-└─────────────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────────────┐
+│                    DISPATCHER (src/dispatcher.js)                          │
+│  • bootstrap tools → 直接执行（不跑 stage pipeline）                        │
+│  • business tools → runtime.execute() 全管线                              │
+│  • autoBootstrap 透明兜底                                                 │
+└───────────────────────────────────────────────────────────────────────────┘
                                     ↓
-┌─────────────────────────────────────────────────────────────────────┐
-│                    SPECIALIZED LM TOOLS                             │
-│  • lm_plan    - Task planning and decomposition                     │
-│  • lm_review  - Code review and quality assessment                  │
-│  • lm_generate - Code generation                                    │
-│  • lm_analyze - Data analysis                                       │
-│  • lm_summarize - Content summarization                             │
-└─────────────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────────────┐
+│                    AGENT RUNTIME (src/runtime/AgentRuntime.js)             │
+│  Lifecycle: initialize → beforeRequest → buildContext → execute            │
+│              → afterExecute → persist → cleanup                            │
+│  EventBus: BeforeTool / AfterTool / ContextBuilt / MemoryLoaded /          │
+│            SessionStarted / WorkspaceChanged                               │
+└───────────────────────────────────────────────────────────────────────────┘
                                     ↓
-┌─────────────────────────────────────────────────────────────────────┐
-│                    LM STUDIO (local LLM)                            │
-└─────────────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────────────┐
+│                    STAGE PIPELINE (src/runtime/framework.js)               │
+│  Workspace → RuntimeContext → ContextBudget → SessionRecovery              │
+│    → Policies(Workspace/Path/Backup) → Rule/Skill/Memory                  │
+│    → MemoryExtract/Retrieve → Identity/Soul → Background                   │
+│    → Capability → Planner → Syntax/Permission Guard                       │
+└───────────────────────────────────────────────────────────────────────────┘
+                                    ↓
+┌───────────────────────────────────────────────────────────────────────────┐
+│                    TOOL EXECUTOR (src/runtime/toolRouter.js)               │
+│  • ToolResult contract（统一返回类型）                                      │
+│  • normalizeResult() 供 Streaming/UI 边界使用                              │
+└───────────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Components
 
-### 1. Task Planner (`src/managers/planner.js`)
+### 1. Dispatcher (`src/dispatcher.js`)
 
-**Purpose**: Breaks large tasks into smaller, manageable subtasks.
+**职责**：唯一请求入口。区分 bootstrap / business tools。
 
-**Key Features**:
-- `analyzeTask()`: Estimates task complexity and token usage
-- `decomposeTask()`: Splits complex tasks based on detected phases or sentence chunks
-- `executePlannedTask()`: Executes planned tasks with progress tracking
+- **Bootstrap tools**（workspace_set/session_start/…）：直接执行，不跑 stage，
+  避免解析过期 workspace 或提前触发磁盘写入。
+- **Business tools**：走完整 stage pipeline，先解析 workspace/session/rules/
+  memory 再执行工具。
+- **autoBootstrap**：首次业务调用无 workspace 时透明兜底（`managers/autoBootstrap.js`）。
 
-**Configuration**:
-```javascript
-const planner = new TaskPlanner({
-  maxSubtasks: 5,
-  defaultTokenBudget: 1000
-});
+### 2. AgentRuntime (`src/runtime/AgentRuntime.js`)
+
+**职责**：核心引擎。Onion pipeline + EventEmitter。
+
+显式生命周期契约：
+
+```
+initialize()     分配资源、接线 Provider
+beforeRequest()  请求前副作用 / Telemetry
+buildContext()   组装 RuntimeContext
+execute()        运行 stage pipeline（核心）
+afterExecute()   管线后副作用
+persist()        持久化状态
+cleanup()        释放资源
 ```
 
-### 2. Budget Manager (`src/managers/budgetManager.js`)
+每个阶段可通过 `hooks` 覆盖，为 Streaming / Multi-Agent / Background Task 预留扩展点。
 
-**Purpose**: Dynamic token budgeting and automatic task splitting.
+### 3. Stage Pipeline (`src/runtime/framework.js`)
 
-**Key Features**:
-- `calculateBudget()`: Calculates token budget with safety margin (default 80%)
-- `estimateTokens()`: Estimates tokens from text
-- `splitTask()`: Automatically splits tasks based on budget constraints
-- Multiple split policies: auto, sentence, character
+**职责**：按序执行 stage，共享同一 `ctx`。当前接线顺序：
 
-**Configuration**:
-```javascript
-const manager = new BudgetManager({
-  maxTokens: 4096,
-  safetyMargin: 0.8,
-  splitPolicy: 'auto'
-});
+| # | Stage | 职责 |
+| --- | --- | --- |
+| 1 | WorkspaceStage | 解析工作区路径 |
+| 2 | RuntimeContextStage | 加载 conversation + workspace（ProviderRegistry） |
+| 3 | ContextBudgetStage | 上下文 token 预算抑制（必须在 conversation 之后） |
+| 4 | SessionRecoveryStage | 会话恢复 |
+| 5-7 | Workspace/Path/BackupPolicyStage | 路径与备份策略守卫 |
+| 8 | RuleStage | 加载 global/project/task rules |
+| 9 | SkillStage | 加载 skills |
+| 10 | MemoryStage | 初始化 memoryManager + store |
+| 11-12 | MemoryExtract / Retrieve | 提取并检索记忆 |
+| 13-14 | Identity / SoulRetrieve | 身份与灵魂记忆 |
+| 15 | BackgroundContextStage | 背景上下文组装 |
+| 16 | CapabilityContextStage | 注入系统能力 + prompt context |
+| 17 | PlannerStage | 执行计划生成 |
+| 18-19 | Syntax / PermissionPolicyStage | 写操作守卫（node --check / deny） |
+| 20 | GuardStage | 最终策略守卫 |
+
+> **未接线但保留**：SessionLifecycleStage / ConversationLoadStage /
+> SummaryStage / SnapshotStage / SessionPersistStage / TaskPolicyStage /
+> SessionStatePolicyStage —— 作为可组合导出供测试与嵌入使用；主管线由
+> RuntimeContextStage 加载 conversation，避免重复磁盘读取。
+
+### 4. Providers (`src/runtime/providers/`)
+
+**职责**：统一持久化接口 `load/save/watch/dispose`（见 CONTEXT_CONTRACT §5）。
+
+| Provider | 后端 |
+| --- | --- |
+| MemoryProvider | `.lmstudio/memory/*.json` |
+| SessionPersistenceProvider | conversations / sessions / snapshots |
+| ConversationProvider | conversation JSON |
+| SessionStateProvider | session state JSON |
+| RuleProvider | global/task/project rules（只读） |
+| ProviderRegistry | 统一注册表 + disposeAll() |
+
+### 5. Event Bus (`src/runtime/EventBus.js`)
+
+**职责**：领域事件。Memory / Telemetry / Log / Plugin / UI / Streaming 全部以
+Observer 订阅，而非互相调用。
+
+```
+BeforeTool / AfterTool / ContextBuilt /
+MemoryLoaded / SessionStarted / WorkspaceChanged
 ```
 
-### 3. Retry Manager (`src/managers/retryManager.js`)
+### 6. Capabilities (`src/runtime/capabilities.js`)
 
-**Purpose**: Implements adaptive retry strategies.
+**职责**：启动时检测系统能力（Shell/Git/Docker/Python/Node/SSH/Workspace），
+注入 `ctx.capabilities`。Planner 据此决定是否调用某 Tool，避免 Prompt 无限变长。
 
-**Key Features**:
-- `reduceScope`: Halves task length on token/context errors
-- `splitTask`: Splits task into two parts on format/JSON errors
-- `askUser`: Prompts user for guidance after multiple failures
-- `waitAndRetry`: Implements exponential backoff for rate limiting
+### 7. Plugin Registry (`src/runtime/plugins/PluginRegistry.js`)
 
-**Configuration**:
-```javascript
-const manager = new RetryManager({
-  maxRetries: 3,
-  strategies: ['reduceScope', 'splitTask', 'askUser', 'waitAndRetry']
-});
+**职责**：插件扩展点。可注册 Tool / Stage / Policy，防止 Dispatcher 越来越大。
+
+## Context Contract
+
+唯一权威定义见 `docs/CONTEXT_CONTRACT.md`。核心字段：
+
+```
+sessionId / workspace / session / conversation / task /
+rules / skills / memory / retrievedMemory / promptContext /
+executionPlan / executionHints / toolRequest / state / result /
+providerRegistry / memoryManager / capabilities / planner / runtimeState
 ```
 
-### 4. Prompt Cache Manager (`src/managers/promptCache.js`)
+## Tool Contract
 
-**Purpose**: Avoids embedding large prompts in Tool JSON.
+所有工具统一返回结构化对象（见 CONTEXT_CONTRACT §4）：
 
-**Key Features**:
-- `storePrompt()`: Stores prompts in memory and disk with metadata
-- `retrievePrompt()`: Retrieves cached prompts by ID
-- Automatic pruning of entries older than 24 hours
-- Creates prompt references for tool calls
-
-**Configuration**:
-```javascript
-const manager = new PromptCacheManager({
-  maxEntries: 100,
-  maxAge: 24 * 60 * 60 * 1000 // 24 hours
-});
+```js
+{ ok, data, type: 'string'|'json'|'mcp_content', meta: { tool, durationMs } }
 ```
 
-### 5. Runtime Harness (`src/managers/runtimeHarness.js`)
+`toolRouter.normalizeResult()` 在 Streaming/UI 边界收敛类型；Dispatcher 保持
+向后兼容返回原始结果。
 
-**Purpose**: Unified orchestrator integrating all components.
+## Memory Growth Control (P2-L2)
 
-**Key Features**:
-- `submitTask()`: Main entry point for task execution
-- Automatic planning, budgeting, retrying, and caching
-- Tool selection based on task description
-- Statistics and history tracking
+- **ContextBudgetStage**：位于 RuntimeContextStage 之后，动态预算钳制为
+  `min(动态, tokenBudget)`。
+- **Memory search**：先按词项命中过滤再叠加排序分，避免无关记忆混入。
+- **isConflict**：仅显式同键且互不包含才算真冲突；细化走 update。
+- **Global store budget**：`maxEntries=500` + `maxEntryChars=2000`，
+  upsertEntry 强制截断与按优先级淘汰。
 
 ## Usage
 
-### Basic Task Execution
-
 ```javascript
-import { runtimeHarness } from './src/managers/runtimeHarness.js';
+import { dispatch } from './src/dispatcher.js';
 
-// Submit a task
-const result = await runtimeHarness.submitTask(
-  'Implement a REST API for user management with authentication',
-  {
-    maxTokens: 4096,
-    model: 'gpt-4'
-  }
-);
-
-console.log(result);
-```
-
-### Using Individual Components
-
-```javascript
-import { taskPlanner } from './src/managers/planner.js';
-import { budgetManager } from './src/managers/budgetManager.js';
-import { retryManager } from './src/managers/retryManager.js';
-
-// Plan a task
-const plan = await taskPlanner.planTask('Your task description');
-
-// Check budget
-const budget = await budgetManager.calculateBudget(
-  'Your task description',
-  { maxTokens: 4096 }
-);
-
-// Execute with retry
-const result = await retryManager.executeWithRetry(
-  async (context) => {
-    // Your task execution logic
-    return executeTask(context.currentTask);
-  },
-  { currentTask: 'Your task description' }
-);
-```
-
-### Using Specialized Tools
-
-```javascript
-import { specializedTools } from './src/tools/lm_specialized.js';
-
-// Planning
-const planResult = await specializedTools.lm_plan({
-  prompt: 'Plan the architecture for a microservices system',
-  max_tokens: 2048
-});
-
-// Review
-const reviewResult = await specializedTools.lm_review({
-  content: codeToReview,
-  focus: 'security',
-  language: 'python'
-});
-
-// Generation
-const generatedCode = await specializedTools.lm_generate({
-  prompt: 'Write a Python function to process CSV files',
-  language: 'python'
+// Business tool call → full stage pipeline
+const result = await dispatch({
+  name: 'file_read',
+  args: { path: 'README.md' },
+  conversationId: 'session-123'
 });
 ```
-
-## Configuration
-
-### Default Configuration
-
-```javascript
-const defaultConfig = {
-  maxTokens: 4096,
-  safetyMargin: 0.8,
-  maxSubtasks: 5,
-  maxRetries: 3,
-  promptCacheMaxEntries: 100,
-  promptCacheMaxAge: 24 * 60 * 60 * 1000
-};
-```
-
-### Custom Configuration
-
-```javascript
-const customConfig = {
-  maxTokens: 8192,
-  safetyMargin: 0.7,
-  maxSubtasks: 10,
-  maxRetries: 5,
-  promptCacheMaxEntries: 500,
-  promptCacheMaxAge: 48 * 60 * 60 * 1000
-};
-
-// Initialize with custom config
-const harness = new RuntimeHarness(customConfig);
-```
-
-## Statistics and Monitoring
-
-```javascript
-// Get runtime statistics
-const stats = runtimeHarness.getStatistics();
-console.log(stats);
-
-// Get task history
-const history = runtimeHarness.getTaskHistory('all');
-history.forEach(task => {
-  console.log(`Task: ${task.taskDescription.substring(0, 50)}...`);
-  console.log(`Status: ${task.executionResult.success ? 'Success' : 'Failed'}`);
-});
-```
-
-## Migration from Legacy
-
-### Before (Legacy)
-
-```javascript
-// Direct lm_chat calls - no planning, budgeting, or retry
-const result = await lm_chat({
-  prompt: largeTaskDescription,
-  max_tokens: 4096
-});
-```
-
-### After (New Architecture)
-
-```javascript
-// Using Runtime Harness - automatic planning, budgeting, retry
-const result = await runtimeHarness.submitTask(largeTaskDescription, {
-  maxTokens: 4096
-});
-
-// Or using individual components
-const plan = await taskPlanner.planTask(largeTaskDescription);
-const budget = await budgetManager.calculateBudget(largeTaskDescription);
-const result = await retryManager.executeWithRetry(
-  async (ctx) => executeTask(ctx.currentTask),
-  { currentTask: largeTaskDescription }
-);
-```
-
-## Best Practices
-
-1. **Always use Runtime Harness**: It provides automatic handling of planning, budgeting, and retries.
-
-2. **Monitor token usage**: Use `budgetManager.checkBudgetStatus()` to track usage percentages.
-
-3. **Cache large prompts**: Prompts > 5000 characters are automatically cached.
-
-4. **Handle failures gracefully**: The retry manager will automatically attempt recovery strategies.
-
-5. **Use specialized tools**: Select the appropriate tool based on task type for better results.
-
-## Troubleshooting
-
-### Task Too Large
-- Error: "Token limit exceeded"
-- Solution: Task is automatically split by Budget Manager. Check `budgetManager.getStatistics()`.
-
-### Retry Exhausted
-- Error: "Max retries exceeded"
-- Solution: Task requires user intervention. Check `retryManager.getStatistics()` for details.
-
-### Prompt Cache Miss
-- Error: "Prompt not found"
-- Solution: Ensure prompt was cached using `promptCacheManager.storePrompt()`. Check cache stats with `promptCacheManager.getStatistics()`.
 
 ## Future Enhancements
 
-- [ ] Add distributed task execution support
-- [ ] Implement task priority queue
-- [ ] Add cost estimation and tracking
-- [ ] Support for streaming responses
-- [ ] Advanced prompt optimization
+- [ ] Streaming / Multi-Agent / Background Task（基于 lifecycle hooks）
+- [ ] SQLite / Redis Provider 后端切换
+- [ ] Tracing / Metrics 全链路观测
+- [ ] ADR 架构决策记录

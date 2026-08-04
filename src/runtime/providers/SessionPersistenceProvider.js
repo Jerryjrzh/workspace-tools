@@ -1,9 +1,11 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import { Provider } from './Provider.js';
 
-export class SessionPersistenceProvider {
+export class SessionPersistenceProvider extends Provider {
   constructor(baseDir = null) {
+    super();
     this.baseDir = baseDir;
   }
 
@@ -21,6 +23,7 @@ export class SessionPersistenceProvider {
     const dir = this.ensureDirectory('conversations');
     const filePath = path.join(dir, `${sessionId}.conversation.json`);
     fs.writeFileSync(filePath, JSON.stringify(conversation, null, 2), 'utf8');
+    this.notifyChange(sessionId, { kind: 'conversation' });
     return filePath;
   }
 
@@ -37,6 +40,7 @@ export class SessionPersistenceProvider {
     const dir = this.ensureDirectory('sessions');
     const filePath = path.join(dir, `${sessionId}.json`);
     fs.writeFileSync(filePath, JSON.stringify(state, null, 2), 'utf8');
+    this.notifyChange(sessionId, { kind: 'session_state' });
     return filePath;
   }
 
@@ -53,6 +57,7 @@ export class SessionPersistenceProvider {
     const dir = this.ensureDirectory('snapshots');
     const filePath = path.join(dir, `${sessionId}.snapshot.json`);
     fs.writeFileSync(filePath, JSON.stringify(snapshot, null, 2), 'utf8');
+    this.notifyChange(sessionId, { kind: 'snapshot' });
     return filePath;
   }
 

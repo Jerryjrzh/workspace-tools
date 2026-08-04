@@ -5,6 +5,7 @@ import { executeTool } from './runtime/toolRouter.js';
 import { ProviderRegistry } from './runtime/providers/ProviderRegistry.js';
 import { memoryProvider } from './runtime/providers/MemoryProvider.js';
 import { conversationProvider } from './runtime/providers/ConversationProvider.js';
+import { ruleProvider } from './runtime/providers/RuleProvider.js';
 import { workspaceManager } from './managers/workspace.js';
 import { sessionContextManager } from './managers/sessionContext.js';
 import { sessionPersistenceProvider } from './runtime/providers/SessionPersistenceProvider.js';
@@ -31,7 +32,8 @@ function createRuntime() {
     conversation: conversationProvider,
     workspace: workspaceManager,
     persistence: sessionPersistenceProvider,
-    memory: memoryProvider
+    memory: memoryProvider,
+    rules: ruleProvider
   });
 
   const runtime = new AgentRuntime();

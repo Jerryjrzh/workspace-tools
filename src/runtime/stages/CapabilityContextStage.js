@@ -1,4 +1,5 @@
 import { buildPromptContext } from '../../managers/promptBuilder.js';
+import { detectCapabilities, summarizeCapabilities } from '../capabilities.js';
 
 export async function CapabilityContextStage(ctx, next) {
   const rules = ctx.rules || [];
@@ -9,6 +10,9 @@ export async function CapabilityContextStage(ctx, next) {
   const soulMemory = ctx.retrievedSoulMemory || [];
   const workingMemory = ctx.retrievedWorkingMemory || [];
 
+  // Detect real system capabilities (Shell/Git/Docker/Python/Workspace/SSH)
+  const systemCapabilities = detectCapabilities(ctx.workspace);
+
   const promptContext = buildPromptContext(ctx);
   const backgroundOrder = ctx.memory?.policies?.backgroundOrder || ['identity', 'soul', 'working', 'session'];
   const backgroundCounts = backgroundOrder.reduce((acc, domain) => {
@@ -17,6 +21,9 @@ export async function CapabilityContextStage(ctx, next) {
   }, {});
 
   ctx.capabilities = {
+    // Real system capabilities
+    ...systemCapabilities,
+    capabilitySummary: summarizeCapabilities(systemCapabilities),
     ruleNames: rules.map((rule) => rule.name),
     skillNames: skills.map((skill) => skill.name || skill),
     memoryKeys: retrievedMemory.map((entry) => entry.key || entry),
@@ -34,7 +41,7 @@ export async function CapabilityContextStage(ctx, next) {
 
   ctx.promptContext = promptContext;
   ctx.executionHints = {
-    summary: `rules=${ctx.capabilities.ruleNames.join(',')};skills=${ctx.capabilities.skillNames.join(',')};memory=${ctx.capabilities.memoryKeys.join(',')}`,
+    summary: `caps=${ctx.capabilities.capabilitySummary};rules=${ctx.capabilities.ruleNames.join(',')};skills=${ctx.capabilities.skillNames.join(',')};memory=${ctx.capabilities.memoryKeys.join(',')}`,
     systemPrompt: promptContext.systemPrompt || '',
     backgroundOrder
   };

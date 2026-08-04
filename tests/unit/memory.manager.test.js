@@ -87,3 +87,39 @@ test('memory manager retrieves only relevant memories for a query', () => {
     fs.rmSync(tempHome, { recursive: true, force: true });
   }
 });
+
+
+test('memory manager enforces global store budget (maxEntries + maxEntryChars)', () => {
+  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), 'memory-budget-'));
+  const provider = new MemoryProvider(path.join(tempHome, '.lmstudio', 'memory'));
+
+  try {
+    // Custom manager with a small global budget to exercise eviction
+    const manager = new MemoryManager(provider, { confidenceThreshold: 0.7 });
+    manager.policy = {
+      ...manager.policy,
+      maxEntries: 10,
+      maxEntryChars: 100
+    };
+
+    // Per-entry character truncation
+    const longValue = 'x'.repeat(500);
+    const truncated = manager.remember('session-budget', {
+      key: 'long',
+      value: longValue,
+      type: 'fact'
+    });
+    assert.ok(String(truncated.value).length < 150, 'oversized value is truncated');
+    assert.match(String(truncated.value), /…\[truncated\]$/);
+
+    // Global entry count eviction
+    for (let i = 1; i <= 15; i++) {
+      manager.remember('session-budget', { key: `entry-${i}`, value: `value ${i}`, type: 'fact' });
+    }
+    const store = manager.loadStore('session-budget');
+    assert.ok(store.entries.length <= 10, 'entries capped at maxEntries');
+  } finally {
+    fs.rmSync(tempHome, { recursive: true, force: true });
+  }
+});
+

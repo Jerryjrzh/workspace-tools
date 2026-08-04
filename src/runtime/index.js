@@ -1,5 +1,10 @@
 // src/runtime/index.js - Export Runtime modules
 import { AgentRuntime, createContext } from './AgentRuntime.js';
+import { EventBus, DOMAIN_EVENTS } from './EventBus.js';
+import { PluginRegistry } from './plugins/PluginRegistry.js';
+import { toToolResult, normalizeToolResult } from './ToolResult.js';
+import { Provider } from './providers/Provider.js';
+import { detectCapabilities } from './capabilities.js';
 import { ContextBudgetStage } from './stages/ContextBudgetStage.js';
 import { WorkspaceStage } from './stages/WorkspaceStage.js';
 import { GuardStage } from './stages/GuardStage.js';
@@ -36,6 +41,13 @@ import { MemoryProvider } from './providers/MemoryProvider.js';
 export {
   AgentRuntime,
   createContext,
+  EventBus,
+  DOMAIN_EVENTS,
+  PluginRegistry,
+  toToolResult,
+  normalizeToolResult,
+  Provider,
+  detectCapabilities,
   ContextBudgetStage,
   WorkspaceStage,
   GuardStage,

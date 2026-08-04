@@ -26,6 +26,9 @@ const DEFAULT_POLICY = {
     working: 5,
     session: 5
   },
+  // Global store budget (P2-L2): prevent unbounded growth in long sessions.
+  maxEntries: 500,          // hard cap on store.entries total count
+  maxEntryChars: 2000,      // per-entry value character budget
   conflictResolution: 'prefer_higher_confidence_then_priority',
   backgroundOrder: ['identity', 'soul', 'working', 'session'],
   expirationActions: {
@@ -255,10 +258,18 @@ export class MemoryManager {
     const entries = [...store.entries];
     const key = input.key || this.generateKey(input.value);
     const existingIndex = entries.findIndex((entry) => entry.key === key);
+
+    // Per-entry character budget: truncate oversized values to prevent unbounded growth.
+    let value = String(input.value ?? '');
+    const maxChars = this.policy.maxEntryChars ?? store.policies.maxEntryChars ?? DEFAULT_POLICY.maxEntryChars;
+    if (value.length > maxChars) {
+      value = `${value.slice(0, maxChars)}…[truncated]`;
+    }
+
     const entry = {
       id: existingIndex >= 0 ? entries[existingIndex].id : this.generateId(),
       key,
-      value: input.value,
+      value,
       type: input.type || 'fact',
       domain: this.normalizeDomain(input.domain || 'session'),
       confidence: input.confidence ?? 1,
@@ -272,6 +283,22 @@ export class MemoryManager {
       entries[existingIndex] = this.mergeEntries(entries[existingIndex], entry);
     } else {
       entries.push(entry);
+    }
+
+    // Global store budget: evict lowest-priority/oldest entries beyond maxEntries.
+    const maxEntries = this.policy.maxEntries ?? store.policies.maxEntries ?? DEFAULT_POLICY.maxEntries;
+    if (entries.length > maxEntries) {
+      entries.sort((a, b) => {
+        const priorityDelta = (b.priority || 0) - (a.priority || 0);
+        if (priorityDelta !== 0) return priorityDelta;
+        return String(b.updatedAt).localeCompare(String(a.updatedAt));
+      });
+      // Keep the highest-priority slice; move evicted to expiredEntries for audit.
+      const evicted = entries.splice(maxEntries);
+      store.expiredEntries = [
+        ...(store.expiredEntries || []),
+        ...evicted.map((e) => ({ ...e, removedAt: new Date().toISOString(), reason: 'global_budget_eviction' }))
+      ].slice(-50);
     }
 
     store.entries = entries;

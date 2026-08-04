@@ -16,6 +16,8 @@ import { BackgroundContextStage } from './stages/BackgroundContextStage.js';
 import { CapabilityContextStage } from './stages/CapabilityContextStage.js';
 import { PlannerStage } from './stages/PlannerStage.js';
 import { GuardStage } from './stages/GuardStage.js';
+import { SyntaxPolicyStage } from './stages/SyntaxPolicyStage.js';
+import { PermissionPolicyStage } from './stages/PermissionPolicyStage.js';
 
 export const runtimeFramework = {
   name: 'workspace-tools-runtime',
@@ -39,6 +41,9 @@ export const runtimeFramework = {
     BackgroundContextStage,
     CapabilityContextStage,
     PlannerStage,
+    // 写操作守卫：在工具执行前校验语法与权限
+    SyntaxPolicyStage,
+    PermissionPolicyStage,
     GuardStage
   ]
 };

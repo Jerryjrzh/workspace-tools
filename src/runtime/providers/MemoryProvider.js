@@ -1,9 +1,11 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import { Provider } from './Provider.js';
 
-export class MemoryProvider {
+export class MemoryProvider extends Provider {
   constructor(baseDir = null) {
+    super();
     this.baseDir = baseDir;
   }
 
@@ -64,6 +66,7 @@ export class MemoryProvider {
       updatedAt: new Date().toISOString()
     };
     fs.writeFileSync(filePath, JSON.stringify(payload, null, 2), 'utf8');
+    this.notifyChange(sessionId, { kind: 'memory', updatedAt: payload.updatedAt });
     return filePath;
   }
 }

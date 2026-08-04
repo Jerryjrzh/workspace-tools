@@ -1,7 +1,9 @@
 import { sessionPersistenceProvider } from './SessionPersistenceProvider.js';
+import { Provider } from './Provider.js';
 
-export class SessionStateProvider {
+export class SessionStateProvider extends Provider {
   constructor(provider = sessionPersistenceProvider) {
+    super();
     this.provider = provider;
   }
 

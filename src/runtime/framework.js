@@ -1,4 +1,5 @@
 import { WorkspaceStage } from './stages/WorkspaceStage.js';
+import { ContextBudgetStage } from './stages/ContextBudgetStage.js';
 import { RuntimeContextStage } from './stages/RuntimeContextStage.js';
 import { SessionRecoveryStage } from './stages/SessionRecoveryStage.js';
 import { WorkspacePolicyStage } from './stages/WorkspacePolicyStage.js';
@@ -22,6 +23,8 @@ export const runtimeFramework = {
   stages: [
     WorkspaceStage,
     RuntimeContextStage,
+    // conversation 在 RuntimeContextStage 中加载，因此抑制必须在其之后才能读到真实消息
+    ContextBudgetStage,
     SessionRecoveryStage,
     WorkspacePolicyStage,
     PathPolicyStage,

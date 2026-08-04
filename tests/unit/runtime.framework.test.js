@@ -6,11 +6,13 @@ import { applyRuntimeFramework, runtimeFramework } from '../../src/runtime/frame
 const stageNames = runtimeFramework.stages.map((stage) => stage.name);
 
 test('runtime framework exposes the expected ordered stages', () => {
+  // ContextBudgetStage 位于 RuntimeContextStage 之后（conversation 加载完成后），
+  // 才能读到真实消息并抑制上下文增长。
   assert.deepEqual(stageNames.slice(0, 4), [
     'WorkspaceStage',
     'RuntimeContextStage',
-    'SessionRecoveryStage',
-    'WorkspacePolicyStage'
+    'ContextBudgetStage',
+    'SessionRecoveryStage'
   ]);
   assert.ok(stageNames.includes('MemoryStage'));
   assert.ok(stageNames.includes('PlannerStage'));

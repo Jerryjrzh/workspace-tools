@@ -1,5 +1,6 @@
 // src/runtime/index.js - Export Runtime modules
 import { AgentRuntime, createContext } from './AgentRuntime.js';
+import { ContextBudgetStage } from './stages/ContextBudgetStage.js';
 import { WorkspaceStage } from './stages/WorkspaceStage.js';
 import { GuardStage } from './stages/GuardStage.js';
 import { ConversationStage } from './stages/ConversationStage.js';
@@ -35,6 +36,7 @@ import { MemoryProvider } from './providers/MemoryProvider.js';
 export {
   AgentRuntime,
   createContext,
+  ContextBudgetStage,
   WorkspaceStage,
   GuardStage,
   ConversationStage,

@@ -173,10 +173,16 @@ export class MemoryManager {
     if (!existingValue || !candidateValue) {
       return false;
     }
-    if (existingValue === candidateValue) {
+    // 同键且值互相包含 → 细化/合并，非冲突
+    if (existingValue === candidateValue ||
+        existingValue.includes(candidateValue) ||
+        candidateValue.includes(existingValue)) {
       return false;
     }
-    return existing.type === candidate.type || existing.key === candidate.key;
+    // 仅当显式同键且互不包含时才视为真冲突；不同 key（含自动生成）的同类条目
+    // 属于细化更新，交由 confidence/priority 合并而非阻塞确认。
+    return existing.key === candidate.key && !existingValue.includes(candidateValue) &&
+      !candidateValue.includes(existingValue);
   }
 
   mergeValues(existingValue, candidateValue) {
@@ -437,8 +443,15 @@ export class MemoryManager {
       return { action: 'conflict', conflict, candidate, nextAction: 'confirm_with_user' };
     }
 
-    const entry = this.merge(sessionId, candidate);
-    return { action: 'merge', entry, candidate };
+    // 细化更新：更高置信度的候选值覆盖旧值（policy: prefer_higher_confidence_then_priority）
+    const entry = this.update(sessionId, similar.key, {
+      value: String(candidate.value),
+      confidence: Math.max(similar.confidence || 0, candidate.confidence || 0),
+      type: candidate.type || similar.type,
+      source: candidate.source || similar.source,
+      priority: Math.max(similar.priority || 0, this.getDomainPriority(candidate.domain || similar.domain))
+    });
+    return { action: 'update', entry, candidate };
   }
 
   search(sessionId, query = '', options = {}) {
@@ -459,20 +472,24 @@ export class MemoryManager {
     }
 
     const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+    // 先按词项命中打分：只有真正命中的条目才进入候选，避免 priority/confidence
+    // 基础分让无关记忆混入检索结果。
     const scored = entries
       .map((entry) => {
         const text = `${entry.key} ${entry.value} ${entry.type} ${entry.domain}`.toLowerCase();
-        let score = 0;
+        let termHits = 0;
         for (const term of terms) {
           if (text.includes(term)) {
-            score += 1;
+            termHits += 1;
           }
         }
-        score += (entry.priority || 0) * 0.1;
-        score += Math.min((entry.confidence || 0) / 10, 0.2);
-        return { entry, score };
+        return { entry, termHits };
       })
-      .filter((item) => item.score > 0)
+      .filter((item) => item.termHits > 0)
+      .map(({ entry, termHits }) => ({
+        entry,
+        score: termHits + (entry.priority || 0) * 0.1 + Math.min((entry.confidence || 0) / 10, 0.2)
+      }))
       .sort((a, b) => {
         if (b.score !== a.score) {
           return b.score - a.score;
@@ -480,6 +497,7 @@ export class MemoryManager {
         return String(b.entry.updatedAt).localeCompare(String(a.entry.updatedAt));
       });
 
+    // 无任何词项命中时，才回退到最近条目（避免空结果）
     if (scored.length === 0) {
       return entries
         .slice()

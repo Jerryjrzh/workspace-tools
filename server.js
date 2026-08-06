@@ -42,7 +42,23 @@ function loadWorkspaceLog(ws) {
   try {
     const logPath = path.join(ws || process.cwd(), WORKSPACE_LOG_FILE);
     if (fs.existsSync(logPath)) {
-      return JSON.parse(fs.readFileSync(logPath, 'utf8'));
+      const parsed = JSON.parse(fs.readFileSync(logPath, 'utf8'));
+      // Normalize `sessions` to an array. context_anchor writes it as an object
+      // keyed by sessionId; legacy code expects the array format [{ date, summary }].
+      if (!parsed || typeof parsed !== 'object') {
+        return { sessions: [] };
+      }
+      let sessions = parsed.sessions;
+      if (Array.isArray(sessions)) {
+        return { ...parsed, sessions };
+      }
+      if (sessions && typeof sessions === 'object') {
+        const archiveEntries = Object.values(sessions).filter(
+          (e) => e && typeof e === 'object' && ('date' in e || 'summary' in e)
+        );
+        return { ...parsed, sessions: archiveEntries };
+      }
+      return { ...parsed, sessions: [] };
     }
   } catch (e) {}
   return { sessions: [] };

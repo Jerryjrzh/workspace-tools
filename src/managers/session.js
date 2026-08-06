@@ -12,7 +12,27 @@ function loadWorkspaceLog(ws) {
   try {
     const logPath = path.join(ws || process.cwd(), '.lmstudio-workspace.json');
     if (fs.existsSync(logPath)) {
-      return JSON.parse(fs.readFileSync(logPath, 'utf8'));
+      const parsed = JSON.parse(fs.readFileSync(logPath, 'utf8'));
+      // Normalize `sessions` to an array of archived session records.
+      // context_anchor writes `.lmstudio-workspace.json` with sessions as an object
+      // keyed by sessionId (each holding { anchor }), while this code expects the
+      // legacy array format [{ date, summary, ... }]. Handle both shapes so a stale
+      // or foreign file can never crash session_start.
+      if (!parsed || typeof parsed !== 'object') {
+        return { sessions: [] };
+      }
+      let sessions = parsed.sessions;
+      if (Array.isArray(sessions)) {
+        return { ...parsed, sessions };
+      }
+      if (sessions && typeof sessions === 'object') {
+        // Object format → collect entries that look like archived session records.
+        const archiveEntries = Object.values(sessions).filter(
+          (e) => e && typeof e === 'object' && ('date' in e || 'summary' in e)
+        );
+        return { ...parsed, sessions: archiveEntries };
+      }
+      return { ...parsed, sessions: [] };
     }
   } catch (e) {}
   return { sessions: [] };
@@ -31,9 +51,19 @@ export async function handleSessionStart(args, passedConvId) {
   }
 
   const detectedTask = conversationManager.detectTaskType(convData);
-  // Resume the previous session's workspace when this is a fresh conversation: prefer the
-  // in-memory context, then per-session persistence, then the persisted globalLast.
-  const workspaceFromContext = context.workspace || workspaceManager.getWorkspaceForSession(sessionId) || workspaceManager.getWorkspace() || process.cwd();
+  // Resume the previous session's workspace when this is a fresh conversation. Priority:
+  //   1. in-memory context (this server process)
+  //   2. per-session persistence
+  //   3. Workspace Compass — most recent trustworthy workspace from history
+  //   4. legacy globalLast / process.cwd() as final fallback
+  //
+  // The compass rejects MCP install dirs and transient test paths, so a stale entry can no
+  // longer shadow the correct project path.
+  const workspaceFromContext =
+    (context.workspace) ? context.workspace :
+    workspaceManager.getWorkspaceForSession(sessionId) ||
+    workspaceManager.getCompassWorkspace() ||
+    process.cwd();
   const normalizedWorkspace = workspaceFromContext ? path.resolve(workspaceFromContext) : process.cwd();
   const rules = await ruleManager.loadGlobalRules();
 

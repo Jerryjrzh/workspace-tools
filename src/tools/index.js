@@ -13,6 +13,7 @@ import { tmuxTools } from './tmux.js';
 import { sessionTools } from './session.js';
 import { envTools } from './env.js';
 import { memoryTools } from './memory.js';
+import { contextCompactTools } from './contextCompact.js';
 import { searchTools } from './search.js';
 
 import { handleWorkspaceTools } from './workspace.js';
@@ -28,6 +29,7 @@ import { handleTmuxTools } from './tmux.js';
 import { handleSessionTools } from './session.js';
 import { handleEnvTools } from './env.js';
 import { handleMemoryTools } from './memory.js';
+import { handleContextCompactTools } from './contextCompact.js';
 import { handleSearchTools } from './search.js';
 
 /**
@@ -106,7 +108,10 @@ export const toolHandlers = {
   // Memory tools
   memory_remember: handleMemoryTools,
   memory_forget: handleMemoryTools,
-  memory_search: handleMemoryTools
+  memory_search: handleMemoryTools,
+
+  // Context compact tools
+  session_context_compact: handleContextCompactTools
 };
 
 /**
@@ -126,5 +131,6 @@ export const ALL_TOOLS = [
   ...tmuxTools,
   ...sessionTools,
   ...envTools,
-  ...memoryTools
+  ...memoryTools,
+  ...contextCompactTools
 ];

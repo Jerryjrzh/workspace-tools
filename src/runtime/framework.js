@@ -18,6 +18,13 @@ import { PlannerStage } from './stages/PlannerStage.js';
 import { GuardStage } from './stages/GuardStage.js';
 import { SyntaxPolicyStage } from './stages/SyntaxPolicyStage.js';
 import { PermissionPolicyStage } from './stages/PermissionPolicyStage.js';
+// Optional workflow pipeline stages (Phase 3). Not enabled by default to avoid
+// breaking the existing single-tool path — wire via applyWorkflowFramework().
+import { PlanningStage } from './workflows/PlanningStage.js';
+import { ExecutionStage } from './workflows/ExecutionStage.js';
+import { ValidationStage } from './workflows/ValidationStage.js';
+import { ReviewStage } from './workflows/ReviewStage.js';
+import { FinalizeStage } from './workflows/FinalizeStage.js';
 
 export const runtimeFramework = {
   name: 'workspace-tools-runtime',
@@ -48,8 +55,32 @@ export const runtimeFramework = {
   ]
 };
 
+/**
+ * Optional workflow pipeline stages (Phase 3). Kept separate from
+ * `runtimeFramework.stages` so existing single-tool paths are unaffected.
+ */
+export const workflowStages = [
+  PlanningStage,
+  ExecutionStage,
+  ValidationStage,
+  ReviewStage,
+  FinalizeStage
+];
+
 export function applyRuntimeFramework(runtime) {
   for (const stage of runtimeFramework.stages) {
+    runtime.use(stage);
+  }
+  return runtime;
+}
+
+/**
+ * Opt-in wiring for the workflow pipeline. Appends the Phase 3 stages AFTER the
+ * core framework so a Task object can flow through Planning → Execution →
+ * Validation → Review → Finalize.
+ */
+export function applyWorkflowFramework(runtime) {
+  for (const stage of workflowStages) {
     runtime.use(stage);
   }
   return runtime;

@@ -38,6 +38,19 @@ import { ProviderRegistry } from './providers/ProviderRegistry.js';
 import { SessionPersistenceProvider } from './providers/SessionPersistenceProvider.js';
 import { MemoryProvider } from './providers/MemoryProvider.js';
 
+// Phase 3: Task object model + Workflow Engine
+export * from './tasks/index.js';
+export * from './workflows/index.js';
+
+// Phase 5: Multi-Agent Framework
+export * from './agents/index.js';
+
+// Phase 4: Artifact Workspace
+export * from './artifacts/index.js';
+
+// Phase 6: Observability (Trace / Timeline / Metrics / ExecutionRecorder)
+export * from './observability/index.js';
+
 export {
   AgentRuntime,
   createContext,

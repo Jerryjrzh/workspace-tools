@@ -67,10 +67,17 @@ async function search(toolName, args, workspace) {
 
   if (mode === 'all' || mode === 'files') {
     const pattern = toolName === 'glob_search' ? args.query : `*${args.query}*`;
-    result.fileMatches = (await runRg(['--files', '-g', pattern, '.'], root)).slice(0, limit);
+    // Use --no-ignore so files excluded by .gitignore (e.g. doc/) are still locatable.
+    result.fileMatches = (await runRg(['--files', '-u', '-g', pattern, '.'], root)).slice(0, limit);
   }
   if (mode === 'all' || mode === 'content') {
     const rgArgs = ['--line-number', '--no-heading', '--color', 'never'];
+    // --no-ignore lets content inside gitignored dirs (e.g. doc/) be searched,
+    // while the explicit glob exclusions keep node_modules/.git/hidden noise out.
+    rgArgs.push('-u');
+    for (const exclude of ['node_modules/**', '.git/**', '.*']) {
+      rgArgs.push('--glob', `!${exclude}`);
+    }
     if (args.regex === false) rgArgs.push('--fixed-strings');
     const context = Math.max(Number(args.context_lines) || 0, 0);
     if (context) rgArgs.push('--context', String(context));

@@ -3,3 +3,19 @@ node_modules/
 .lmstudio-workspace.json
 .DS_Store
 doc/
+
+# LM Studio runtime artifacts & backups (not source)
+.lmstudio-backups/
+.lmstudio-runtime/
+.lmstudio-snapshots/
+.kiro/
+
+# Temporary fix/repair scripts and stray files
+fix_session.py
+fix_session_final.py
+make_session.py
+src/managers/session.js.original
+
+# Binary artifacts / junk
+workspace-tools_*.tar.gz
+改代码块-

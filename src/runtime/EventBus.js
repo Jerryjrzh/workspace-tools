@@ -13,7 +13,13 @@ export const DOMAIN_EVENTS = {
   ContextBuilt: 'ContextBuilt',
   MemoryLoaded: 'MemoryLoaded',
   SessionStarted: 'SessionStarted',
-  WorkspaceChanged: 'WorkspaceChanged'
+  WorkspaceChanged: 'WorkspaceChanged',
+
+  // Phase 6 Observability domain events
+  TraceSpan: 'TraceSpan',
+  TimelineEvent: 'TimelineEvent',
+  MetricRecorded: 'MetricRecorded',
+  ExecutionRecorded: 'ExecutionRecorded'
 };
 
 /**
@@ -59,6 +65,20 @@ export class EventBus extends EventEmitter {
   }
   workspaceChanged(payload) {
     return this.emitDomain(DOMAIN_EVENTS.WorkspaceChanged, payload);
+  }
+
+  // ── Phase 6 Observability aliases ──
+  traceSpan(payload) {
+    return this.emitDomain(DOMAIN_EVENTS.TraceSpan, payload);
+  }
+  timelineEvent(payload) {
+    return this.emitDomain(DOMAIN_EVENTS.TimelineEvent, payload);
+  }
+  metricRecorded(payload) {
+    return this.emitDomain(DOMAIN_EVENTS.MetricRecorded, payload);
+  }
+  executionRecorded(payload) {
+    return this.emitDomain(DOMAIN_EVENTS.ExecutionRecorded, payload);
   }
 
   /**

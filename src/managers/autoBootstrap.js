@@ -29,7 +29,10 @@ export async function autoResolveWorkspace(sessionId, args = {}) {
   const persistedWorkspace = workspaceManager.getWorkspaceForSession(sessionId);
   const inferredWorkspace = conversationManager.detectWorkspace(convData, args.path);
   const globalWorkspace = workspaceManager.getWorkspace();
-  const candidates = [persistedWorkspace, inferredWorkspace, globalWorkspace]
+  // Workspace Compass: most recent trustworthy workspace from history (rejects MCP install
+  // dirs and transient test paths).
+  const compassWorkspace = workspaceManager.getCompassWorkspace();
+  const candidates = [persistedWorkspace, inferredWorkspace, globalWorkspace, compassWorkspace]
     .filter((candidate) => candidate && fs.existsSync(candidate));
 
   if (candidates.length > 0) {

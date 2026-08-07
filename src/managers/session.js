@@ -51,23 +51,31 @@ export async function handleSessionStart(args, passedConvId) {
   }
 
   const detectedTask = conversationManager.detectTaskType(convData);
-  // Resume the previous session's workspace when this is a fresh conversation. Priority:
-  //   1. in-memory context (this server process)
-  //   2. per-session persistence
-  //   3. Workspace Compass — most recent trustworthy workspace from history
-  //   4. legacy globalLast / process.cwd() as final fallback
-  //
-  // The compass rejects MCP install dirs and transient test paths, so a stale entry can no
-  // longer shadow the correct project path.
-  const workspaceFromContext =
-    (context.workspace) ? context.workspace :
-    workspaceManager.getWorkspaceForSession(sessionId) ||
-    workspaceManager.getCompassWorkspace() ||
-    process.cwd();
-  const normalizedWorkspace = workspaceFromContext ? path.resolve(workspaceFromContext) : process.cwd();
+
+  // ── Workspace resolution ─────────────────────────────
+  // Priority:
+  //   1. Explicit workspace hinted in the request args or conversation content → set it + update history.
+  //   2. Otherwise resume from previous session / compass history.
+  const detectedWorkspace = conversationManager.detectWorkspace(convData, args?.path);
+
+  let normalizedWorkspace;
+  if (detectedWorkspace) {
+    // Explicit hint found: use it and record in the workspace history/compass.
+    normalizedWorkspace = path.resolve(detectedWorkspace);
+  } else {
+    // No explicit hint → resume from previous session / compass history.
+    const fallback =
+      context.workspace ||
+      workspaceManager.getWorkspaceForSession(sessionId) ||
+      workspaceManager.getCompassWorkspace() ||
+      process.cwd();
+    normalizedWorkspace = path.resolve(fallback);
+  }
+
   const rules = await ruleManager.loadGlobalRules();
 
   context.workspace = normalizedWorkspace;
+  // setSessionWorkspace also records the resolved path in the compass history.
   workspaceManager.setSessionWorkspace(sessionId, normalizedWorkspace);
   context.task = detectedTask;
   context.rules = rules;

@@ -1,4 +1,9 @@
 // Consolidated tool exports from all tool modules
+//
+// 工具按需加载 / 分组路由：
+//   - ALL_TOOLS 保持全量（向后兼容，供内部/测试使用）
+//   - TOOL_GROUPS + listEnabledTools() 用于 MCP ListTools 的按组注入
+//   - server.js 默认仅暴露 core 组；ops(运维)组需显式启用
 
 import { workspaceTools } from './workspace.js';
 import { fileTools } from './file.js';
@@ -134,3 +139,14 @@ export const ALL_TOOLS = [
   ...memoryTools,
   ...contextCompactTools
 ];
+
+
+// ── Tool Group Routing (按需加载 / 分组路由) ─────────────────────────
+export {
+  TOOL_GROUPS,
+  DEFAULT_GROUPS,
+  resolveEnabledGroups,
+  listEnabledTools,
+  isToolEnabled
+} from './groups.js';
+

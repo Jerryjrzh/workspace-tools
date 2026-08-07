@@ -20,7 +20,21 @@ import { workspaceManager } from "./src/managers/workspace.js";
 import { handleSessionStart } from "./src/managers/session.js";
 import { ruleManager } from "./src/managers/rules.js";
 import { dispatch as runtimeDispatch } from "./src/dispatcher.js";
-import { ALL_TOOLS, toolHandlers } from "./src/tools/index.js";
+import {
+  ALL_TOOLS,
+  toolHandlers,
+  listEnabledTools,
+  isToolEnabled
+} from "./src/tools/index.js";
+
+// Server options: tools.groups 控制注入的工具组（默认仅 core）。
+//   - core: workspace/file/search/git/context/memory/embedding/review/task
+//   - ops : shell process / tmux / ssh-serial / env （运维扩展，按需启用）
+// 也可用环境变量 WORKSPACE_TOOLS_GROUPS=core,ops 覆盖。
+const _envGroups = (process.env.WORKSPACE_TOOLS_GROUPS || '').split(',').filter(Boolean);
+const SERVER_OPTIONS = {
+  tools: { groups: _envGroups }
+};
 
 // Import additional tools that are still in server.js for now
 import fs from "fs";
@@ -191,10 +205,29 @@ const server = new Server(
   { capabilities: { tools: {} } }
 );
 
-server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: ALL_TOOLS }));
+// ListTools 按启用组返回：默认仅 core（开发常用），ops(运维)工具不注入，
+// 直到显式启用 WORKSPACE_TOOLS_GROUPS=core,ops。
+server.setRequestHandler(ListToolsRequestSchema, async () => listEnabledTools(SERVER_OPTIONS));
 
 server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
   const { name, arguments: args } = request.params;
+
+  // ── Tool Group Guard ─────────────────────────────────────────────
+  // 未启用组的工具不执行，返回明确提示（而非 "Tool not found"）。
+  const toolCheck = isToolEnabled(name, SERVER_OPTIONS);
+  if (!toolCheck.enabled) {
+    return {
+      content: [{
+        type: 'text',
+        text: `🔒 工具 "${name}" 属于运维扩展组(ops)，当前未启用。\n\n` +
+              `默认仅注入 core 组（workspace/file/search/git/context/memory/\n` +
+              `embedding/review/task）。如需启用运维工具，请设置环境变量：\n` +
+              `WORKSPACE_TOOLS_GROUPS=core,ops  或 server options tools.groups=['core','ops']。`
+      }],
+      isError: true
+    };
+  }
+
   try {
     const result = await handleTool(name, args || {}, extra);
     if (result && typeof result === 'object') {

@@ -279,4 +279,63 @@ export async function handleContextCompactTools(name, args, context) {
   }
 }
 
+/**
+ * 自动压缩入口（供 dispatcher 在任务结束时调用，无需模型手动触发）。
+ *
+ * 复用 compactConversation + backupFile 的完整逻辑：读取对话文件 → 备份 →
+ * 抑制 Task 过程步骤与早期消息 → 写回。幂等、安全策略与 session_context_compact
+ * 完全一致。
+ *
+ * @param {string} conversationId - LM Studio 对话 ID（.conversation.json 文件名）
+ * @param {Object} [options] - keepRecentMessages / suppressToolProcess
+ * @returns {{ ok: boolean, stats?: Object, message?: string }}
+ */
+export function autoCompactConversation(conversationId, options = {}) {
+  if (!conversationId || conversationId === 'default') {
+    return { ok: false, message: `无法确定对话 ID（${conversationId}），跳过自动压缩` };
+  }
+
+  const convDir = getConversationsDir();
+  const filePath = path.join(convDir, `${conversationId}.conversation.json`);
+  if (!fs.existsSync(filePath)) {
+    return { ok: false, message: `未找到对话文件: ${filePath}` };
+  }
+
+  let convData;
+  try {
+    convData = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  } catch (error) {
+    return { ok: false, message: `解析对话文件失败: ${error.message}` };
+  }
+
+  // 备份原始文件
+  let backupPath;
+  try {
+    backupPath = backupFile(filePath);
+  } catch (error) {
+    return { ok: false, message: `备份失败，已中止自动压缩: ${error.message}` };
+  }
+
+  const cfg = {
+    keepRecentMessages: options.keepRecentMessages ?? 4,
+    suppressToolProcess: options.suppressToolProcess ?? true
+  };
+
+  // 执行压缩（直接修改 convData）
+  const { data, stats } = compactConversation(convData, cfg);
+
+  try {
+    fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf8');
+  } catch (error) {
+    return { ok: false, message: `写回失败: ${error.message}（原始文件已备份到 ${backupPath}）` };
+  }
+
+  return {
+    ok: true,
+    stats,
+    backupPath,
+    message: `自动压缩完成：抑制 ${stats.suppressedSteps}/${stats.totalSteps} 步骤，保留 ${stats.keptSteps}`
+  };
+}
+
 export default handleContextCompactTools;

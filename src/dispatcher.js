@@ -9,6 +9,48 @@ import { ruleProvider } from './runtime/providers/RuleProvider.js';
 import { workspaceManager } from './managers/workspace.js';
 import { sessionContextManager } from './managers/sessionContext.js';
 import { sessionPersistenceProvider } from './runtime/providers/SessionPersistenceProvider.js';
+import { autoCompactConversation } from './tools/contextCompact.js';
+
+/**
+ * 任务结束信号：这些收尾型工具执行成功后，说明一个 Task 已完成，
+ * 触发自动上下文压缩（抑制 Task 过程步骤与早期消息）。
+ */
+const TASK_COMPLETION_TOOLS = new Set([
+  'task_checkpoint',
+  'git_commit'
+]);
+
+/** 记录每个会话最近一次自动压缩时间，避免同一任务重复压缩 */
+const lastCompactAt = new Map();
+
+/**
+ * 在业务工具执行成功后检测"任务结束信号"，触发自动上下文压缩。
+ * 仅当该会话尚未在本轮 Task 中压缩过时执行（幂等）。
+ *
+ * @param {string} toolName - 刚执行的业务工具名
+ * @param {string} sessionId - 当前会话 ID
+ */
+function maybeAutoCompact(toolName, sessionId) {
+  if (!TASK_COMPLETION_TOOLS.has(toolName)) return;
+  if (!sessionId || sessionId === 'default') return;
+
+  // 同一会话在较短时间内已压缩过 → 跳过（幂等保护）
+  const now = Date.now();
+  const lastAt = lastCompactAt.get(sessionId);
+  if (lastAt && (now - lastAt) < 60_000) return;
+  lastCompactAt.set(sessionId, now);
+
+  // 异步触发，不阻塞工具返回
+  autoCompactConversation(sessionId).then((res) => {
+    if (!res.ok) {
+      console.warn(`[auto-compact] ${sessionId}: ${res.message}`);
+      return;
+    }
+    console.log(`[auto-compact] ${sessionId}: ${res.message} (${res.backupPath})`);
+  }).catch((err) => {
+    console.warn(`[auto-compact] ${sessionId} 失败: ${err.message}`);
+  });
+}
 
 /**
  * Bootstrap tools are lifecycle primitives that establish context rather than consume it.
@@ -134,6 +176,9 @@ async function dispatch(request) {
     initialData.workspace = workspace;
     ctx = await runtime.execute(initialData);
   }
+
+  // Task 完成信号：业务工具执行成功后，若属于收尾型工具则触发自动上下文压缩
+  maybeAutoCompact(toolName, sessionId);
 
   return ctx.result;
 }

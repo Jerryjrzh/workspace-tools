@@ -2,8 +2,13 @@
 // 工具按需加载 / 分组路由 (Tool Group Routing)
 //
 // 默认仅注入 core 组（开发常用：workspace/file/search/git/context/memory/
-// embedding/review/task），运维类扩展工具（shell process、tmux、ssh/serial、
-// env）归入 ops 组，仅在显式启用后才会暴露给模型。
+// embedding/review/task + bootstrap 的 session_start），运维类扩展工具
+// （shell process、tmux、ssh/serial、env）归入 ops 组，仅在显式启用后
+// 才会暴露给模型。
+//
+// ⚠️ 重要：session_start 是 bootstrap 生命周期核心（初始化会话/加载规则/
+//    解析工作区），必须始终可用 → 归入 core。仅 ssh_session/serial_session
+//    属于运维扩展，留在 ops。
 //
 // 启用方式（优先级从高到低）：
 //   1. MCP server options:   { tools: { groups: ['core','ops'] } }
@@ -32,10 +37,17 @@ import { sessionTools } from './session.js';
 import { envTools } from './env.js';
 
 /**
+ * 从 sessionTools 中拆分出 bootstrap 核心工具。
+ * session_start 必须始终可用（core），ssh/serial 属运维扩展（ops）。
+ */
+const SESSION_BOOTSTRAP_TOOLS = sessionTools.filter((t) => t.name === 'session_start');
+const SESSION_OPS_TOOLS = sessionTools.filter((t) => t.name !== 'session_start');
+
+/**
  * 工具组定义：group → tool list
  */
 export const TOOL_GROUPS = {
-  // core: 开发常用，默认始终加载
+  // core: 开发常用 + bootstrap，默认始终加载
   core: [
     ...workspaceTools,
     ...fileTools,
@@ -47,13 +59,15 @@ export const TOOL_GROUPS = {
     ...reviewTools,
     ...memoryTools,
     ...taskTools,
-    ...contextCompactTools
+    ...contextCompactTools,
+    // bootstrap 核心：session_start（初始化会话）必须始终可用
+    ...SESSION_BOOTSTRAP_TOOLS
   ],
   // ops: 运维扩展（shell process / tmux / ssh-serial / env），按需启用
   ops: [
     ...shellTools,
     ...tmuxTools,
-    ...sessionTools,
+    ...SESSION_OPS_TOOLS,
     ...envTools
   ]
 };

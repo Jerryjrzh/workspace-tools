@@ -65,9 +65,12 @@ function backupFile(filePath) {
   return backupPath;
 }
 
-// 判断一个 contentBlock step 是否属于 Task 执行过程（含工具调用/结果）
+// 判断一个 step 是否属于 Task 执行过程（含工具调用/结果/确认交互）
 function isToolProcessStep(step) {
   if (!step || typeof step !== 'object') return false;
+  if (step.type === 'requestConfirmToolCall' || step.type === 'confirmToolCall') {
+    return true;
+  }
   const content = step.content;
   let hasToolCall = false;
   function scan(obj) {

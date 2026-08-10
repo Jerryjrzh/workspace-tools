@@ -19,8 +19,13 @@
  * @param {Object} message - 原始消息
  * @returns {string}
  */
+function isToolConfirmationRecord(message) {
+  if (!message || typeof message !== 'object') return false;
+  return message.type === 'requestConfirmToolCall' || message.type === 'confirmToolCall';
+}
+
 export function extractMessageText(message) {
-  if (!message || typeof message !== 'object') return '';
+  if (!message || typeof message !== 'object' || isToolConfirmationRecord(message)) return '';
   const sel = message.versions?.[message.currentlySelected] || message.versions?.[0];
   if (!sel) return '';
 
@@ -38,7 +43,7 @@ export function extractMessageText(message) {
     for (const step of sel.steps) {
       const sc = step.content;
       if (Array.isArray(sc)) {
-        // 只取 text 类型 part，跳过 toolCallRequest / toolCallResult
+        // 只取 text 类型 part，跳过 toolCallRequest / toolCallResult / confirmation records
         for (const part of sc) {
           if (part?.type === 'text' && typeof part.text === 'string') {
             texts.push(part.text);
@@ -69,6 +74,9 @@ function extractPartsText(parts = []) {
   const texts = [];
   for (const part of parts) {
     if (!part || typeof part !== 'object') continue;
+    if (part.type === 'requestConfirmToolCall' || part.type === 'confirmToolCall') {
+      continue;
+    }
     if (part.type === 'text' && typeof part.text === 'string') {
       texts.push(part.text);
     } else if (typeof part.text === 'string') {

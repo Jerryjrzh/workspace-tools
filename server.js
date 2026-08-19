@@ -21,10 +21,11 @@ import { handleSessionStart } from "./src/managers/session.js";
 import { ruleManager } from "./src/managers/rules.js";
 import { dispatch as runtimeDispatch } from "./src/dispatcher.js";
 import {
-  ALL_TOOLS,
-  toolHandlers,
   listEnabledTools,
-  isToolEnabled
+  isToolEnabled,
+  capabilitySet,
+  isDiscoverable,
+  promoteTool
 } from "./src/tools/index.js";
 
 // Server options: tools.groups 控制注入的工具组（默认仅 core）。
@@ -200,28 +201,56 @@ function getWorkspace() {
 /**
  * MCP Server ────────────────────────────────────────────────────────────────
  */
+// ⚠️ listChanged: true —— 声明支持 notifications/tools/list_changed，
+//    使 workspace_discover promote 后能通知 MCP client 刷新工具列表。
 const server = new Server(
   { name: "workspace-tools", version: "1.0.1" },
-  { capabilities: { tools: {} } }
+  { capabilities: { tools: { listChanged: true } } }
 );
 
 // ListTools 按启用组返回：默认仅 core（开发常用），ops(运维)工具不注入，
-// 直到显式启用 WORKSPACE_TOOLS_GROUPS=core,ops。
-server.setRequestHandler(ListToolsRequestSchema, async () => listEnabledTools(SERVER_OPTIONS));
+// 直到显式启用 WORKSPACE_TOOLS_GROUPS=core,ops，或被 workspace_discover promote。
+// listEnabledTools() 为 async，仅在启动时按启用组动态加载对应模块定义；
+// capabilitySet.promoted 的 ops 工具会被追加到广告面（模型可见可调用）。
+server.setRequestHandler(ListToolsRequestSchema, async () => await listEnabledTools(SERVER_OPTIONS, capabilitySet));
 
 server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
   const { name, arguments: args } = request.params;
 
-  // ── Tool Group Guard ─────────────────────────────────────────────
+  // ── Tool Group Guard + Runtime promote ────────────────────────────
   // 未启用组的工具不执行，返回明确提示（而非 "Tool not found"）。
-  const toolCheck = isToolEnabled(name, SERVER_OPTIONS);
+  //
+  // ⚠️ review4 T5：promote 是 **Runtime 内部状态机**，不作为模型协议的一部分。
+  //    模型在 workspace_discover 看到候选后，下一轮直接调用目标工具名；
+  //    Runtime 检测到"可发现(ops)但未注入的工具被调用"时自动 promote + refresh，
+  //    并返回提示（下一轮完整 schema 可用）。模型无需显式 select/promote。
+  const toolCheck = isToolEnabled(name, SERVER_OPTIONS, capabilitySet);
+  if (!toolCheck.enabled && isDiscoverable(name)) {
+    // 可发现(ops)但未注入：Runtime 自动 promote（内部动作）
+    const promoted = promoteTool(name);
+    return {
+      content: [{
+        type: 'text',
+        text: `🔧 已提升 "${name}" 到可见能力集` +
+              (promoted?.changed ? `（toolSetVersion=${capabilitySet.version}）` : '') +
+              `。
+
+下一轮请求将包含完整 schema，请直接调用它。`
+      }],
+      isError: false
+    };
+  }
   if (!toolCheck.enabled) {
     return {
       content: [{
         type: 'text',
-        text: `🔒 工具 "${name}" 属于运维扩展组(ops)，当前未启用。\n\n` +
-              `默认仅注入 core 组（workspace/file/search/git/context/memory/\n` +
-              `embedding/review/task）。如需启用运维工具，请设置环境变量：\n` +
+        text: `🔒 工具 "${name}" 属于运维扩展组(ops)，当前未启用。
+
+` +
+              `默认仅注入 core 组（workspace/file/search/git/context/memory/
+` +
+              `embedding/review/task）。如需启用运维工具，请设置环境变量：
+` +
               `WORKSPACE_TOOLS_GROUPS=core,ops  或 server options tools.groups=['core','ops']。`
       }],
       isError: true
@@ -257,6 +286,22 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
   } catch (err) {
     // In a real implementation, we would log the error here
     return { content: [{ type: "text", text: `❌ ${err.message}` }], isError: true };
+  }
+});
+
+// ── in-session capability refresh ─────────────────────────────────────
+// workspace_discover promote 后，capabilitySet.onChanged 触发：
+//   1. MCP notification（路径 A）：通知 client 刷新 tools/list
+//   2. Runtime 内部失效（路径 B）：由订阅方 invalidate tool cache，
+//      下一轮 LLM request 重新构建 tools（不复用 session snapshot）
+//
+// ⚠️ sendToolListChanged() 依赖 capabilities.tools.listChanged = true（已声明）。
+capabilitySet.onChanged(({ toolSetVersion }) => {
+  console.error(`[discovery] capability changed → toolSetVersion=${toolSetVersion}, notify client + runtime`);
+  // 路径 A：MCP notification
+  if (server.transport) {
+    server.sendToolListChanged().catch((err) =>
+      console.warn('[discovery] sendToolListChanged failed:', err?.message || err));
   }
 });
 

@@ -128,16 +128,14 @@ export function compactConversation(convData, options = {}) {
       const defaultVal = step.defaultShouldIncludeInContext ?? true;
 
       // 决定是否抑制：
-      //   - 最近消息：始终保留
-      //   - 早期消息 + Task 过程步骤（工具调用/结果）：抑制
+      //   - 早期消息仅抑制工具步骤，保留用户意图文本
+      //   - 最近消息中工具步骤也抑制，只保留文本结论
       let shouldSuppress = false;
-      if (!isRecentMessage) {
-        // 早期消息默认抑制；若配置了 suppressToolProcess，则所有早期 contentBlock 都抑制
-        shouldSuppress = true;
-      } else if (cfg.suppressToolProcess && isToolProcessStep(step)) {
-        // 最近消息中的 Task 过程步骤（工具调用/结果）也抑制，只保留文本结论
+      if (cfg.suppressToolProcess && isToolProcessStep(step)) {
+        // 工具过程步骤在早期和最近消息中均抑制
         shouldSuppress = true;
       }
+      // 早期消息不再全量抑制，避免丢失关键用户意图
 
       const targetValue = !shouldSuppress;
 

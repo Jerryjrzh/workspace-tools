@@ -61,6 +61,7 @@ const BOOTSTRAP_TOOLS = new Set([
   'workspace_set',
   'session_start',
   'workspace_info',
+  'workspace_discover',   // 能力发现：纯查询，不依赖 workspace/session
   'load_global_rules',
   'load_task_rules',
   'workspace_clear'
@@ -128,8 +129,8 @@ async function dispatch(request) {
   if (BOOTSTRAP_TOOLS.has(toolName)) {
     const context = sessionContextManager.getOrCreateContext(sessionId);
 
-    // Query/clear tools are always safe to run regardless of initialization state.
-    const alwaysRun = new Set(['workspace_info', 'workspace_clear', 'load_global_rules', 'load_task_rules']);
+    // Query/clear/discover tools are always safe to run regardless of initialization state.
+    const alwaysRun = new Set(['workspace_info', 'workspace_discover', 'workspace_clear', 'load_global_rules', 'load_task_rules']);
     if (!context.initialized || alwaysRun.has(toolName)) {
       return executeTool(toolName, request.args || {}, {
         sessionId,

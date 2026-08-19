@@ -20,6 +20,16 @@ export const memoryTools = [
           type: 'string',
           description: '记忆类型，如 preference、fact、instruction',
           enum: ['preference', 'fact', 'instruction']
+        },
+        domain: {
+          type: 'string',
+          description: '记忆域，决定存储位置与优先级',
+          enum: ['session', 'working', 'identity', 'soul'],
+          default: 'session'
+        },
+        priority: {
+          type: 'number',
+          description: '手动优先级覆盖，默认由域决定'
         }
       },
       required: ['value']

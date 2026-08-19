@@ -470,9 +470,9 @@ export class MemoryManager {
       return { action: 'conflict', conflict, candidate, nextAction: 'confirm_with_user' };
     }
 
-    // 细化更新：更高置信度的候选值覆盖旧值（policy: prefer_higher_confidence_then_priority）
+    // 细化更新：更高置信度的候选值合并旧值，避免信息丢失
     const entry = this.update(sessionId, similar.key, {
-      value: String(candidate.value),
+      value: this.mergeValues(similar.value, String(candidate.value)),
       confidence: Math.max(similar.confidence || 0, candidate.confidence || 0),
       type: candidate.type || similar.type,
       source: candidate.source || similar.source,

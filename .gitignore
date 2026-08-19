@@ -19,3 +19,8 @@ src/managers/session.js.original
 # Binary artifacts / junk
 workspace-tools_*.tar.gz
 改代码块-
+
+# Python bytecode
+__pycache__/
+*.pyc
+

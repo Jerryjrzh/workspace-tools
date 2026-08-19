@@ -1,8 +1,14 @@
-import { toolHandlers } from '../tools/index.js';
+import { getToolHandler as lazyGetToolHandler } from '../tools/registry.js';
 import { normalizeToolResult } from './ToolResult.js';
 
-export function getToolHandler(toolName) {
-  return toolHandlers[toolName] || null;
+/**
+ * Resolve a tool's handler, lazily loading its module on first use.
+ *
+ * Missing/unloaded tools are auto-routed to their owning module via the
+ * static TOOL_TO_MODULE table and dynamically imported (then cached).
+ */
+export async function getToolHandler(toolName) {
+  return lazyGetToolHandler(toolName);
 }
 
 /**
@@ -14,7 +20,7 @@ export function getToolHandler(toolName) {
  * e.g. at Streaming / UI boundaries where a uniform type is required.
  */
 export async function executeTool(toolName, args, context) {
-  const handler = getToolHandler(toolName);
+  const handler = await getToolHandler(toolName);
   if (!handler) {
     throw new Error(`Tool not found: ${toolName}`);
   }
